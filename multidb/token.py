@@ -26,10 +26,9 @@ class BaseToken:
         match = cls.regexp.match(pos.text)
         return (match.end(), match) if match else (0, None)
 
-    def __init__(self, start, end, match):
-        self.start = start.copy()
-        self.end = end.copy()
+    def __init__(self, match, interval):
         self.match = match
+        self.interval = interval
 
     @utils.lazy_property
     def raw_value(self):
