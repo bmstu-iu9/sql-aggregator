@@ -40,6 +40,9 @@ class BaseToken:
             'Необходимо определить метод decode в {}'.format(self.__class__.__name__)
         )
 
+    def __str__(self):
+        return '{!r}{}({})'.format(self.interval, self.__class__.__name__, self.decode)
+
 
 class IntToken(BaseToken):
     kind = BaseToken.INT
@@ -96,11 +99,11 @@ class DatetimeToken(StringToken):
 
 class IdentifierToken(BaseToken):
     kind = BaseToken.IDENTIFIER
-    regexp = re.compile(r'[a-zA-Z_][a-zA-Z_0-9]*')
+    regexp = re.compile(r'[a-zA-Z_][a-zA-Z_0-9]*|`[a-zA-Z_][a-zA-Z_0-9]*`')
 
     @utils.lazy_property
     def decode(self):
-        return self.raw_value
+        return self.raw_value.strip('`')
 
 
 class KeywordToken(IdentifierToken):
@@ -111,15 +114,15 @@ class KeywordToken(IdentifierToken):
 
     @classmethod
     def match(cls, pos):
-        size, match = super().match()
+        size, match = super().match(pos)
         if match:
             val = match.group().upper()
             if val in cls.RESERVED_WORDS or val in cls.NON_RESERVED_WORDS:
                 return size, match
         return 0, None
 
-    def __init__(self, start, end, match):
-        super().__init__(start, end, match)
+    def __init__(self, match, interval):
+        super().__init__(match, interval)
         self.is_reserved = self.decode in self.RESERVED_WORDS
 
     @utils.lazy_property

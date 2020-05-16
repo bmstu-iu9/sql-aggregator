@@ -1,6 +1,6 @@
 import logging
+
 from . import token as tk
-from operator import itemgetter
 
 logger = logging.getLogger('lexer')
 
