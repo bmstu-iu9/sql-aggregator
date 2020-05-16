@@ -14,4 +14,3 @@ sql-aggregator (MultiDB) позволяет в одном запросе ман�
 * [Документация PostgreSQL](https://www.postgresql.org/docs/)
 * [Документация MySQL](https://dev.mysql.com/doc/)
 * [Документация SQLite](https://www.sqlite.org/docs.html)
-* [Документация SQLAlchemy](https://docs.sqlalchemy.org/en/13/)
