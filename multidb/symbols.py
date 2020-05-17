@@ -1,3 +1,10 @@
+# noinspection PyUnresolvedReferences
+__all__ = ['ampersand', 'asterisk', 'circumflex', 'colon', 'comma', 'concatenation_operator', 'double_colon',
+           'double_quote', 'equals_operator', 'greater_than_operator', 'greater_than_or_equals_operator', 'left_brace',
+           'left_bracket', 'left_paren', 'less_than_operator', 'less_than_or_equals_operator', 'minus_sign',
+           'not_equals_operator', 'percent', 'period', 'plus_sign', 'question_mark', 'quote', 'right_arrow',
+           'right_brace', 'right_bracket', 'right_paren', 'semicolon', 'solidus', 'underscore', 'vertical_bar']
+
 # Важно сохранить порядок по уменьшению длины спецсимволов
 # Необходимо для корректной работы регулярного выражения
 SPEC_SYMBOLS = (
