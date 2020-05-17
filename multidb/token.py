@@ -46,7 +46,7 @@ class BaseToken:
 
 class IntToken(BaseToken):
     kind = BaseToken.INT
-    regexp = re.compile(r'[1-9]\d*|0')
+    regexp = re.compile(r'(?:[1-9]\d*|0)(?![0-9A-Za-z_])')
 
     @utils.lazy_property
     def decode(self):
@@ -55,7 +55,7 @@ class IntToken(BaseToken):
 
 class FloatToken(BaseToken):
     kind = BaseToken.FLOAT
-    regexp = re.compile(r'([1-9]\d*|0)?\.\d+|([1-9]\d*|0)\.')
+    regexp = re.compile(r'(?:([1-9]\d*|0)?\.\d+|([1-9]\d*|0)\.)(?![0-9A-Za-z_])')
 
     @utils.lazy_property
     def decode(self):

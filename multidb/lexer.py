@@ -1,8 +1,9 @@
 import logging
 
+from . import _logger
 from . import token as tk
 
-logger = logging.getLogger('lexer')
+logger = logging.getLogger('lexer')  # type: _logger.ParserLogger
 
 
 class Position:
@@ -14,7 +15,6 @@ class Position:
         self.idx = idx or 0
         self.row = row or 1
         self.col = col or 1
-
 
     @property
     def text(self):
@@ -118,6 +118,7 @@ class Lexer:
 
         self.interval = None
         self.last_interval = None
+        logger.set_lexer(self)
 
     def get_matches(self):
         start = self.pos.copy()
@@ -135,10 +136,10 @@ class Lexer:
             max_size = matches[0][1][0]
 
             if not max_size:
-                while not self.pos.isspace or not self.pos.is_end:
+                while not self.pos.isspace and not self.pos.is_end:
                     self.pos.next()
                 self.interval.end = self.pos.copy()
-                logger.error('Wrong sequences: %s', str(self.interval))
+                logger.current_token.error('Wrong sequences: %s', str(self.interval))
             else:
                 self.pos.nextn(max_size)
                 self.interval.end = self.pos.copy()
