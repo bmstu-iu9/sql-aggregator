@@ -12,3 +12,11 @@ class ParseDatetimeException(ParseException):
 
 class NotSupported(Exception):
     pass
+
+
+class SyntaxException(Exception):
+    pass
+
+
+class FatalSyntaxException(SyntaxException):
+    pass
