@@ -17,6 +17,7 @@ class BaseToken:
     IDENTIFIER = 5
     KEYWORD = 6
     SYMBOL = 7
+    END = 8
 
     kind = None
     regexp = None
@@ -40,8 +41,14 @@ class BaseToken:
             'Необходимо определить метод decode в {}'.format(self.__class__.__name__)
         )
 
+    def check_type(self, other):
+        return isinstance(other, type) and self.__class__ == other
+
     def __str__(self):
-        return '{!r}{}({})'.format(self.interval, self.__class__.__name__, self.decode)
+        return '{}({})'.format(self.__class__.__name__, self.decode)
+
+    def __repr__(self):
+        return '{}({!r}->{})'.format(self.__class__.__name__, self.raw_value, self.decode)
 
 
 class IntToken(BaseToken):
@@ -129,6 +136,9 @@ class KeywordToken(IdentifierToken):
     def decode(self):
         return super().decode.upper()
 
+    def check_type(self, other):
+        return isinstance(other, str) and self.decode == other
+
 
 class SymbolToken(BaseToken):
     kind = BaseToken.SYMBOL
@@ -139,3 +149,24 @@ class SymbolToken(BaseToken):
     @utils.lazy_property
     def decode(self):
         return self.SYMBOL_TO_NAME[self.raw_value]
+
+    def check_type(self, other):
+        return isinstance(other, str) and self.decode == other
+
+
+class EndToken(BaseToken):
+    kind = BaseToken.END
+
+    def __init__(self, match=None, interval=None):
+        super().__init__(match, interval)
+
+    @utils.lazy_property
+    def raw_value(self):
+        return None
+
+    @utils.lazy_property
+    def decode(self):
+        return None
+
+    def __str__(self):
+        return self.__class__.__name__

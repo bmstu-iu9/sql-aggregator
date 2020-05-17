@@ -113,13 +113,18 @@ class Lexer:
         tk.SymbolToken
     ]
 
-    def __init__(self, program):
-        self.program = program
-        self.pos = Position(program)
+    def __init__(self, pos, interval=None, last_interval=None, current_tokens=None):
+        self.pos = pos
 
-        self.interval = None
-        self.last_interval = None
-        logger.set_lexer(self)
+        self.interval = interval
+        self.last_interval = last_interval
+        self.current_tokens = current_tokens
+
+    def next(self):
+        old_token = self.current_tokens
+        self.current_tokens = self.parse()
+        logger.current_token.debug(repr(self.current_tokens))
+        return old_token
 
     def get_matches(self):
         start = self.pos.copy()
@@ -128,7 +133,7 @@ class Lexer:
             for t in self.TOKENS
         ), key=lambda x: x[1][0], reverse=True)
 
-    def __parse(self):
+    def parse(self):
         self.pos.skip_space()
         while not self.pos.is_end:
             self.last_interval, self.interval = self.interval, Interval()
@@ -149,6 +154,14 @@ class Lexer:
                     for t, (size, match) in matches
                     if size == max_size
                 )
-                yield tokens
+                return tokens
 
             self.pos.skip_space()
+
+        return tk.EndToken()
+
+    def __copy__(self):
+        return Lexer(self.pos, self.interval, self.last_interval, self.current_tokens)
+
+    def copy(self):
+        return self.__copy__()

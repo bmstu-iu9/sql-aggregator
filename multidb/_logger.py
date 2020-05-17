@@ -34,6 +34,10 @@ class ParserLogger(logging.Logger):
         #  1 current token
 
     @classmethod
+    def set_is_crashed(cls, is_crashed):
+        cls.is_crashed = is_crashed
+
+    @classmethod
     def set_lexer(cls, lexer):
         cls.lexer = lexer
 
