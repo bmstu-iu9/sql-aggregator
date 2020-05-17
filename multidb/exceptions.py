@@ -8,3 +8,7 @@ class ParseDateException(ParseException):
 
 class ParseDatetimeException(ParseException):
     pass
+
+
+class NotSupported(Exception):
+    pass

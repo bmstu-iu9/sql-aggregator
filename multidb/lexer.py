@@ -3,6 +3,7 @@ import logging
 from . import _logger
 from . import token as tk
 
+# noinspection PyTypeChecker
 logger = logging.getLogger('lexer')  # type: _logger.ParserLogger
 
 
