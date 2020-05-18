@@ -1,3 +1,33 @@
+class AsMixin:
+    def __init__(self, *args, **kwargs):
+        self.short_name = None
+
+    def as_(self, name):
+        self.short_name = name
+
+
+class NameChain(AsMixin):
+    def __init__(self, *args):
+        super().__init__()
+        self.chain = list(args)
+
+    @staticmethod
+    def __map_other(other):
+        return (
+            other.chain
+            if isinstance(other, NameChain) else
+            list(other)
+            if isinstance(other, (list, tuple)) else
+            [other]
+        )
+
+    def push_first(self, other):
+        self.chain = self.__map_other(other) + self.chain
+
+    def push_last(self, other):
+        self.chain = self.chain + self.__map_other(other)
+
+
 class Schema:
     def __init__(self, name: str, tables=None):
         self.name = name

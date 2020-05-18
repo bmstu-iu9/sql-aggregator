@@ -1,14 +1,12 @@
 import logging
 
 from . import symbols as ss
+from . import structures as st
 
 
-class BaseExpression:
+class BaseExpression(st.AsMixin):
     def __init__(self):
-        self.name = None
-
-    def as_(self, name):
-        self.name = name
+        super().__init__()
 
 
 class NumericExpression(BaseExpression):
