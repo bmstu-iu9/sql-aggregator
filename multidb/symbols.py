@@ -51,4 +51,4 @@ NAME_TO_SYMBOL = {
     for k, v in SPEC_SYMBOLS
 }
 
-globals().update(NAME_TO_SYMBOL)
+globals().update({k: k for k, v in SPEC_SYMBOLS})

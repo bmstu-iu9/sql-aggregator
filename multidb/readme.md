@@ -80,7 +80,7 @@
 ```
 
 `comparison_predicate` (Стр. 287)
-------------------------------
+---------------------------------
 Причина изменения - левая рекурсия (для `comparison predicate`)
 
 Раньше:
@@ -117,4 +117,18 @@
        | <greater than operator>
        | <less than or equals operator>
        | <greater than or equals operator>
+```
+`table name` (Стр. 113)
+-----------------------
+Причина изменения - использование уже существующего нетерменала
+
+Раньше:
+```
+<table name> :: =
+         <local or schema qualified name>
+```
+Новая грамматика:
+```
+<table name> :: =
+         <basic identifier chain>
 ```

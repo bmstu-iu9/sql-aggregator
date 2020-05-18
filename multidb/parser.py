@@ -11,11 +11,13 @@ from . import parse_data
 from . import predicates as ps
 from . import structures as st
 from . import symbols as ss
+from . import utils
 from . import token as tk
 from .exceptions import NotSupported, FatalSyntaxException, SyntaxException
 
 # noinspection PyTypeChecker
 logger = logging.getLogger('parser')  # type: _logger.ParserLogger
+tree_logger = logging.getLogger('logger_tree')
 
 
 class CmpLexer(lexer.Lexer):
@@ -46,10 +48,10 @@ class CmpLexer(lexer.Lexer):
                 value = token.decode
                 fail = False
                 break
-        return fail, value
+        return fail, value, other
 
     def __rshift__(self, other):
-        fail, value = self.check(other)
+        fail, value, other = self.check(other)
         if fail:
             if self.mode == self.OPTIONAL:
                 self.mode = self.STRICT
@@ -90,6 +92,7 @@ class Parser:
         exceptions = []
         freeze_state = logger.is_crashed
         for idx, alt in enumerate(alternatives):
+            logger.append_line_buffer()
             knot = self.token.copy()
             try:
                 data = (idx, alt())
@@ -97,6 +100,7 @@ class Parser:
             except SyntaxException as ex:
                 exceptions.append(ex)
                 self.token = knot
+            logger.pop_line_buffer()
         else:
             msg = 'Exceptions in all alternatives:\n{}'.format(
                 '\n'.join(
@@ -105,6 +109,7 @@ class Parser:
                 )
             )
             raise FatalSyntaxException(msg)
+        logger.pop_line_buffer(True)
         logger.set_is_crashed(freeze_state)
         return data
 
@@ -129,6 +134,7 @@ class Parser:
 
         self.token >> tk.EndToken
 
+    @utils.log(tree_logger)
     def select(self):
         # SELECT <select_list> <table_expression>
         self.token >> kw.SELECT
@@ -136,6 +142,7 @@ class Parser:
         kwargs = self.table_expression()
         return dml.Selection(select_list=select_list, **kwargs)
 
+    @utils.log(tree_logger)
     def select_list(self):
         #   <asterisk>
         # | <select_sublist> [ { <comma> <select_sublist> }... ]
@@ -143,10 +150,11 @@ class Parser:
             data = self.token.next()
         else:
             data = [self.select_sublist()]
-            while self.token == ss.comma:
+            while self.token.optional >> ss.comma:
                 data.append(self.select_sublist())
         return data
 
+    @utils.log(tree_logger)
     def select_sublist(self):
         #   <qualified_asterisk>
         # | <derived_column>
@@ -154,33 +162,40 @@ class Parser:
         data = self._choice_of_alternatives([self.qualified_asterisk, self.derived_column])
         return data
 
+    @utils.log(tree_logger)
     def qualified_asterisk(self):
         # <asterisked_identifier_chain> <asterisk>
         data = self.asterisked_identifier_chain()
         self.token >> ss.asterisk
         return data
 
+    @utils.log(tree_logger)
     def asterisked_identifier_chain(self):
         # <asterisked_identifier::ID> <period> [ { <asterisked_identifier> <period> }... ]
         data = [self.token >> tk.IdentifierToken]
         self.token >> ss.period
-        while self.token == tk.IdentifierToken:
-            data.append(self.token.next().decode)
+        while True:
+            el = self.token.optional >> tk.IdentifierToken
+            if not el:
+                break
+            data.append(el)
             self.token >> ss.period
         return data
 
+    @utils.log(tree_logger)
     def derived_column(self):
-        # <value_expression> [ <as_clause> ]
+        # <value_expression> [ [ AS ] <column_name::ID> ]
         expression = self.value_expression()
         name = None
         if self.token == kw.AS:
             self.token.next()
             name = self.token >> tk.IdentifierToken
-        elif self.token == tk.IdentifierToken:
+        elif self.token == tk.IdentifierToken and self.token != kw.FROM:
             name = self.token.next()
         expression.as_(name)
         return expression
 
+    @utils.log(tree_logger)
     def value_expression(self):
         #   <numeric_value_expression>
         # | <boolean_value_expression>
@@ -189,6 +204,7 @@ class Parser:
         kind, value = self._choice_of_alternatives([self.numeric_primary, self.boolean_primary])
         return value
 
+    @utils.log(tree_logger)
     def not_boolean_value_expression(self):
         #   <numeric_value_expression>
         # | <string_value_expression>
@@ -196,6 +212,7 @@ class Parser:
         kind, value = self._choice_of_alternatives([self.numeric_primary])
         return value
 
+    @utils.log(tree_logger)
     def numeric_value_expression(self):
         #   <term>
         # | <term> <plus_sign> <numeric_value_expression>
@@ -212,6 +229,7 @@ class Parser:
         right = self.numeric_value_expression()
         return cls(left, right)
 
+    @utils.log(tree_logger)
     def term(self):
         #   <factor>
         # | <factor> <asterisk> <term>
@@ -228,6 +246,7 @@ class Parser:
         right = self.term()
         return cls(left, right)
 
+    @utils.log(tree_logger)
     def factor(self):
         # [ <sign> ] <numeric_primary>
         sign = ss.plus_sign
@@ -237,41 +256,49 @@ class Parser:
         primary.set_sign(sign)
         return primary
 
+    @utils.log(tree_logger)
     def numeric_primary(self):
         # <value_expression_primary>
         return self.value_expression_primary()
 
+    @utils.log(tree_logger)
     def string_value_expression(self):
         raise NotSupported
 
+    @utils.log(tree_logger)
     def datetime_value_expression(self):
         raise NotSupported
 
+    @utils.log(tree_logger)
     def boolean_value_expression(self):
         #   <boolean_term>
         # | <boolean_term> OR <boolean_value_expression>
         left = self.boolean_term()
-        if self.token == kw.OR:
+        if self.token.optional >> kw.OR:
             right = self.boolean_value_expression()
             return expr.OrBooleanExpression(left, right)
         return left
 
+    @utils.log(tree_logger)
     def boolean_term(self):
         #   <boolean_factor>
         # | <boolean_factor> AND <boolean_term>
         left = self.boolean_factor()
-        if self.token == kw.AND:
+        if self.token.optional >> kw.AND:
             right = self.boolean_term()
             return expr.AndBooleanExpression(left, right)
         return left
 
+    @utils.log(tree_logger)
     def boolean_factor(self):
         # [ NOT ] <boolean_test>
         is_not = True if self.token.optional >> kw.NOT else False
         factor = self.boolean_test()
-        factor.set_not(is_not)
+        # TODO:
+        # factor.set_not(is_not)
         return factor
 
+    @utils.log(tree_logger)
     def boolean_test(self):
         # <boolean_primary> [ IS [ NOT ] <truth_value> ]
         primary = self.boolean_primary()
@@ -282,6 +309,7 @@ class Parser:
             primary = expr.IsBooleanExpression(primary, value, is_not)
         return primary
 
+    @utils.log(tree_logger)
     def truth_value(self):
         #   TRUE
         # | FALSE
@@ -289,18 +317,23 @@ class Parser:
         # В стандарте вместо NULL используют UNKNOWN
         return self.token >> (kw.TRUE, kw.FALSE, kw.NULL)
 
+    @utils.log(tree_logger)
     def boolean_primary(self):
         #   <predicate>
         # | <parenthesized_boolean_value_expression>
         # | <nonparenthesized_value_expression_primary>
-        if self.token == ss.left_paren:
-            return self._choice_of_alternatives([self.parenthesized_value_expression, self.predicate])
-        return self.nonparenthesized_value_expression_primary()
+        return self._choice_of_alternatives([
+            self.predicate,
+            self.parenthesized_value_expression,
+            self.nonparenthesized_value_expression_primary,
+        ])
 
+    @utils.log(tree_logger)
     def predicate(self):
         # <comparison_predicate>
         return self.comparison_predicate()
 
+    @utils.log(tree_logger)
     def comparison_predicate(self):
         # <operand_comparison> <comp_op> <operand_comparison>
         left = self.operand_comparison()
@@ -308,11 +341,13 @@ class Parser:
         right = self.operand_comparison()
         return ps.ComparisonPredicate(left, right, op)
 
+    @utils.log(tree_logger)
     def operand_comparison(self):
         if self.token == ss.left_paren:
             return self.parenthesized_value_expression()
         return self.not_boolean_value_expression()
 
+    @utils.log(tree_logger)
     def comp_op(self):
         #   <equals_operator>
         # | <not_equals_operator>
@@ -326,19 +361,23 @@ class Parser:
             ss.less_than_or_equals_operator, ss.greater_than_or_equals_operator
         )
 
+    @utils.log(tree_logger)
     def row_value_expression(self):
         # <row_value_special_case>
         return self.row_value_special_case()
 
+    @utils.log(tree_logger)
     def row_value_special_case(self):
         #   <value_expression>
         # | <value_specification>
         return self._choice_of_alternatives([self.value_expression, self.value_specification])
 
+    @utils.log(tree_logger)
     def value_specification(self):
         # <literal>
         return self.literal()
 
+    @utils.log(tree_logger)
     def parenthesized_boolean_value_expression(self):
         # <left_paren> <boolean_value_expression> <right_paren>
         self.token >> ss.left_paren
@@ -346,6 +385,7 @@ class Parser:
         self.token >> ss.right_arrow
         return value
 
+    @utils.log(tree_logger)
     def value_expression_primary(self):
         #   <parenthesized_value_expression>
         # | <nonparenthesized_value_expression_primary>
@@ -353,6 +393,7 @@ class Parser:
             return self.parenthesized_value_expression()
         return self.nonparenthesized_value_expression_primary()
 
+    @utils.log(tree_logger)
     def parenthesized_value_expression(self):
         # <left_paren> <value_expression> <right_paren>
         self.token >> ss.left_paren
@@ -360,6 +401,7 @@ class Parser:
         self.token >> ss.right_paren
         return data
 
+    @utils.log(tree_logger)
     def nonparenthesized_value_expression_primary(self):
         #   <unsigned_value_specification>
         # | <column_reference>
@@ -367,10 +409,12 @@ class Parser:
             return self.column_reference()
         return self.unsigned_value_specification()
 
+    @utils.log(tree_logger)
     def unsigned_value_specification(self):
         # <unsigned_literal>
         return self.unsigned_literal()
 
+    @utils.log(tree_logger)
     def literal(self):
         #   <signed_numeric_literal>
         # | <general_literal>
@@ -378,6 +422,7 @@ class Parser:
             return self.signed_numeric_literal()
         return self.general_literal()
 
+    @utils.log(tree_logger)
     def signed_numeric_literal(self):
         # [ <sign> ] <unsigned_numeric_literal>
         sign = ss.plus_sign
@@ -388,6 +433,7 @@ class Parser:
             value *= -1
         return value
 
+    @utils.log(tree_logger)
     def unsigned_literal(self):
         #   <unsigned_numeric_literal>
         # | <general_literal
@@ -395,11 +441,13 @@ class Parser:
             return self.unsigned_numeric_literal()
         return self.general_literal()
 
+    @utils.log(tree_logger)
     def unsigned_numeric_literal(self):
         #   INTEGER
         # | FLOAT
         return self.token >> (tk.IntToken, tk.FloatToken)
 
+    @utils.log(tree_logger)
     def general_literal(self):
         #   <character_string_literal::STR>
         # | <datetime_literal::DT>
@@ -412,19 +460,23 @@ class Parser:
             return None
         return self.token >> (tk.StringToken, tk.DateToken, tk.DatetimeToken)
 
+    @utils.log(tree_logger)
     def sign(self):
         #   <plus_sign>
         # | <minus_sign>
         return self.token >> (ss.plus_sign, ss.minus_sign)
 
+    @utils.log(tree_logger)
     def column_reference(self):
         # <basic_identifier_chain>
         return self.basic_identifier_chain()
 
+    @utils.log(tree_logger)
     def basic_identifier_chain(self):
         # <identifier_chain>
         return self.identifier_chain()
 
+    @utils.log(tree_logger)
     def identifier_chain(self):
         # <identifier::ID> [ { <period> <identifier::ID> }... ]
         chain = st.NameChain(self.token >> tk.IdentifierToken)
@@ -432,11 +484,7 @@ class Parser:
             chain.push_last(self.token >> tk.IdentifierToken)
         return chain
 
-    def as_clause(self):
-        # [ AS ] <column_name::ID>
-        _ = self.token.optional >> kw.AS
-        return self.token >> tk.IdentifierToken
-
+    @utils.log(tree_logger)
     def table_expression(self):
         # <from_clause> [ <where_clause> ] [ <group_by_clause> ] [ <having_clause> ]
         data = {'from_': self.from_clause()}
@@ -450,11 +498,13 @@ class Parser:
 
         return data
 
+    @utils.log(tree_logger)
     def from_clause(self):
         # FROM <table_reference_list>
         self.token >> kw.FROM
         return self.table_reference_list()
 
+    @utils.log(tree_logger)
     def table_reference_list(self):
         # <table_reference> [ { <comma> <table_reference> }... ]
         data = [self.table_reference()]
@@ -462,6 +512,7 @@ class Parser:
             data.append(self.table_reference())
         return data
 
+    @utils.log(tree_logger)
     def table_reference(self):
         # <join_factor> [ { <join_type> }... ]
         first = self.join_factor()
@@ -475,6 +526,7 @@ class Parser:
 
         return accumulate
 
+    @utils.log(tree_logger)
     def join_factor(self):
         #   <table_primary>
         # | <left_paren> <table_reference> <right_paren>
@@ -485,6 +537,7 @@ class Parser:
             data = self.table_primary()
         return data
 
+    @utils.log(tree_logger)
     def table_primary(self):
         # <table_or_query_name> [ [ AS ] <correlation_name::ID> ]
         name = self.table_or_query_name()
@@ -494,49 +547,35 @@ class Parser:
             name.as_(self.token.optional >> tk.IdentifierToken)
         return name
 
+    @utils.log(tree_logger)
     def table_or_query_name(self):
         #   <table_name>
         # | <query_name>
         return self.table_name()
 
+    @utils.log(tree_logger)
     def table_name(self):
-        return self.local_or_schema_qualifier()
+        # <basic_identifier_chain>
+        return self.basic_identifier_chain()
 
-    def local_or_schema_qualified_name(self):
-        # [ <local_or_schema_qualifier> <period> ] <qualified_identifier::ID>
-        name = self.local_or_schema_qualifier()
-        if self.token.optional >> ss.period:
-            name.push_last(self.token >> tk.IdentifierToken)
-        return name
-
-    def local_or_schema_qualifier(self):
-        # <schema_name>
-        return self.schema_name()
-
-    def schema_name(self):
-        # [ <catalog_name::ID> <period> ] <unqualified_schema_name::ID>
-        # Каталог - СУБД
-        first_name = self.token >> tk.IdentifierToken
-        if self.token.optional >> ss.period:
-            second_name = self.token >> tk.IdentifierToken
-            name = st.NameChain(first_name, second_name)
-        else:
-            name = st.NameChain(first_name)
-        return name
-
+    @utils.log(tree_logger)
     def joined_table(self):
+        #   <cross_join>
+        # | <qualified_join>
         if self.token == kw.CROSS:
             join = self.cross_join()
         else:
             join = self.qualified_join()
         return join
 
+    @utils.log(tree_logger)
     def cross_join(self):
         # CROSS JOIN <join_factor>
         self.token >> kw.CROSS
         self.token >> kw.JOIN
         return jn.CrossJoin(self.join_factor())
 
+    @utils.log(tree_logger)
     def qualified_join(self):
         # [ <join_type> ] JOIN <join_factor> <join_specification>
         cls = jn.DEFAULT_JOIN
@@ -547,12 +586,15 @@ class Parser:
         spec = self.join_specification()
         return cls(right, spec)
 
+    @utils.log(tree_logger)
     def natural_join(self):
         raise NotSupported
 
+    @utils.log(tree_logger)
     def union_join(self):
         raise NotSupported
 
+    @utils.log(tree_logger)
     def join_specification(self):
         #   <join_condition>
         # | <named_columns_join>
@@ -562,14 +604,17 @@ class Parser:
             data = self.named_columns_join()
         return data
 
+    @utils.log(tree_logger)
     def join_condition(self):
         # ON <search_condition>
         self.token >> kw.ON
         return self.search_condition()
 
+    @utils.log(tree_logger)
     def search_condition(self):
         return self.boolean_value_expression()
 
+    @utils.log(tree_logger)
     def named_columns_join(self):
         # USING <left_paren> <join_column_list> <right_paren>
         self.token >> kw.USING
@@ -578,6 +623,7 @@ class Parser:
         self.token >> ss.right_paren
         return data
 
+    @utils.log(tree_logger)
     def join_type(self):
         #   INNER
         # | <outer_join_type> [ OUTER ]
@@ -588,6 +634,7 @@ class Parser:
         self.token >> kw.INNER
         return jn.InnerJoin
 
+    @utils.log(tree_logger)
     def outer_join_type(self):
         #   LEFT
         # | RIGHT
@@ -599,10 +646,12 @@ class Parser:
         self.token >> kw.FULL
         return jn.FullJoin
 
+    @utils.log(tree_logger)
     def join_column_list(self):
         # <column_name_list>
         return self.column_name_list()
 
+    @utils.log(tree_logger)
     def column_name_list(self):
         # <column_name::ID> [ { <comma> <column_name::ID> }... ]
         data = [self.token >> tk.IdentifierToken]
@@ -610,22 +659,28 @@ class Parser:
             data.append(self.token >> tk.IdentifierToken)
         return data
 
+    @utils.log(tree_logger)
     def where_clause(self):
         # WHERE <search_condition>
         self.token >> kw.WHERE
         return self.search_condition()
 
+    @utils.log(tree_logger)
     def group_by_clause(self):
         raise NotSupported
 
+    @utils.log(tree_logger)
     def having_clause(self):
         raise NotSupported
 
+    @utils.log(tree_logger)
     def insert(self):
         raise NotSupported
 
+    @utils.log(tree_logger)
     def update(self):
         raise NotSupported
 
+    @utils.log(tree_logger)
     def delete(self):
         raise NotSupported

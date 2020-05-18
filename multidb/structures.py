@@ -27,6 +27,9 @@ class NameChain(AsMixin):
     def push_last(self, other):
         self.chain = self.chain + self.__map_other(other)
 
+    def __str__(self):
+        return '.'.join(self.chain)
+
 
 class Schema:
     def __init__(self, name: str, tables=None):
