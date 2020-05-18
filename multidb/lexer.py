@@ -158,10 +158,10 @@ class Lexer:
 
             self.pos.skip_space()
 
-        return tk.EndToken()
+        return [tk.EndToken()]
 
     def __copy__(self):
-        return Lexer(self.pos, self.interval, self.last_interval, self.current_tokens)
+        return self.__class__(self.pos.copy(), self.interval, self.last_interval, self.current_tokens)
 
     def copy(self):
         return self.__copy__()
