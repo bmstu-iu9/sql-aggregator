@@ -90,18 +90,19 @@ class Parser:
         уменьшения возможной длины разбора)
         """
         exceptions = []
+        success = []
         freeze_state = logger.is_crashed
         for idx, alt in enumerate(alternatives):
             logger.append_line_buffer()
             knot = self.token.copy()
             try:
                 data = (idx, alt())
-                break
+                success.append((data, logger.buffer.pop(), self.token.copy()))
             except SyntaxException as ex:
                 exceptions.append(ex)
-                self.token = knot
-            logger.pop_line_buffer()
-        else:
+                logger.pop_line_buffer()
+            self.token = knot
+        if not success:
             msg = 'Exceptions in all alternatives:\n{}'.format(
                 '\n'.join(
                     '{}: {}'.format(alt.__name__, str(ex))
@@ -109,6 +110,11 @@ class Parser:
                 )
             )
             raise FatalSyntaxException(msg)
+
+        data, buff, token = max(success, key=lambda x: x[-1].pos.idx)
+        self.token = token
+
+        logger.append_line_buffer(buff)
         logger.pop_line_buffer(True)
         logger.set_is_crashed(freeze_state)
         return data

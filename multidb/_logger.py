@@ -46,8 +46,8 @@ class ParserLogger(logging.Logger):
                         logging.Logger._log(slf, *args)
 
     @classmethod
-    def append_line_buffer(cls):
-        cls.buffer.append([])
+    def append_line_buffer(cls, data=None):
+        cls.buffer.append(data or [])
 
     @classmethod
     def set_is_crashed(cls, is_crashed):
