@@ -1,4 +1,6 @@
 import logging
+from functools import wraps
+
 
 # noinspection PyPep8Naming
 class lazy_property:
@@ -24,6 +26,7 @@ class log:
         self.name = name
 
     def __call__(self, func):
+        @wraps(func)
         def new_func(*args, **kwargs):
             self.logger.log(self.level, '%s> %s', ' ' * log.size, func.__name__ if self.name is None else self.name)
             log.size += log.step

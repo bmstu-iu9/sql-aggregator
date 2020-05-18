@@ -23,7 +23,7 @@ def setup_logging(
 
 class ParserLogger(logging.Logger):
     is_crashed = False
-    lexer = None
+    parser = None
     log_position = True
     buffer = []
 
@@ -54,8 +54,8 @@ class ParserLogger(logging.Logger):
         cls.is_crashed = is_crashed
 
     @classmethod
-    def set_lexer(cls, lexer):
-        cls.lexer = lexer
+    def set_parser(cls, parser):
+        cls.parser = parser
 
     @property
     def do_not_display_pos(self):
@@ -73,10 +73,12 @@ class ParserLogger(logging.Logger):
         return self
 
     def _log(self, level, msg, args, exc_info=None, extra=None, stack_info=False):
+        lexer = self.parser.token
+
         if level >= logging.ERROR:
             self.__class__.is_crashed = True
-        if self.log_position and self.mode >= 0 and self.lexer:
-            pos = self.lexer.interval if self.mode else self.lexer.last_interval
+        if self.log_position and self.mode >= 0 and lexer:
+            pos = lexer.interval if self.mode else lexer.last_interval
             msg = '{!r} {}'.format(pos, msg)
         self.mode = 0
         self.log_position = True

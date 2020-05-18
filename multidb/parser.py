@@ -76,7 +76,7 @@ class CmpLexer(lexer.Lexer):
 
 class Parser:
     def __init__(self, lex: CmpLexer):
-        logger.set_lexer(lex)
+        logger.set_parser(self)
         self.token = lex
         self.data = parse_data.ParseData()
 
@@ -120,19 +120,21 @@ class Parser:
         # | <delete>
         self.token.next()
 
+        data = None
         if self.token == kw.SELECT:
-            self.select()
+            data = self.select()
 
         elif self.token == kw.INSERT:
-            self.insert()
+            data = self.insert()
 
         elif self.token == kw.UPDATE:
-            self.update()
+            data = self.update()
 
         elif self.token == kw.DELETE:
-            self.delete()
+            data = self.delete()
 
         self.token >> tk.EndToken
+        return data
 
     @utils.log(tree_logger)
     def select(self):
@@ -201,7 +203,10 @@ class Parser:
         # | <boolean_value_expression>
         # | <string_value_expression>
         # | <datetime_value_expression>
-        kind, value = self._choice_of_alternatives([self.numeric_primary, self.boolean_primary])
+        kind, value = self._choice_of_alternatives([
+            self.numeric_value_expression,
+            self.boolean_value_expression
+        ])
         return value
 
     @utils.log(tree_logger)
@@ -209,7 +214,7 @@ class Parser:
         #   <numeric_value_expression>
         # | <string_value_expression>
         # | <datetime_value_expression>
-        kind, value = self._choice_of_alternatives([self.numeric_primary])
+        kind, value = self._choice_of_alternatives([self.numeric_value_expression])
         return value
 
     @utils.log(tree_logger)
@@ -253,7 +258,8 @@ class Parser:
         if self.token == (ss.plus_sign, ss.minus_sign):
             sign = self.sign()
         primary = self.numeric_primary()
-        primary.set_sign(sign)
+        # Todo
+        # primary.set_sign(sign)
         return primary
 
     @utils.log(tree_logger)
@@ -302,8 +308,7 @@ class Parser:
     def boolean_test(self):
         # <boolean_primary> [ IS [ NOT ] <truth_value> ]
         primary = self.boolean_primary()
-        if self.token == kw.IS:
-            self.token.next()
+        if self.token.optional >> kw.IS:
             is_not = True if self.token.optional >> kw.NOT else False
             value = self.truth_value()
             primary = expr.IsBooleanExpression(primary, value, is_not)
@@ -324,7 +329,7 @@ class Parser:
         # | <nonparenthesized_value_expression_primary>
         return self._choice_of_alternatives([
             self.predicate,
-            self.parenthesized_value_expression,
+            self.parenthesized_boolean_value_expression,
             self.nonparenthesized_value_expression_primary,
         ])
 
@@ -382,7 +387,7 @@ class Parser:
         # <left_paren> <boolean_value_expression> <right_paren>
         self.token >> ss.left_paren
         value = self.boolean_value_expression()
-        self.token >> ss.right_arrow
+        self.token >> ss.right_paren
         return value
 
     @utils.log(tree_logger)

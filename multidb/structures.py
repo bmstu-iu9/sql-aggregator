@@ -27,6 +27,9 @@ class NameChain(AsMixin):
     def push_last(self, other):
         self.chain = self.chain + self.__map_other(other)
 
+    def __repr__(self):
+        return '{}({})'.format(self.__class__.__name__, self)
+
     def __str__(self):
         return '.'.join(self.chain)
 
