@@ -25,6 +25,7 @@ class ParserLogger(logging.Logger):
     is_crashed = False
     lexer = None
     log_position = True
+    buffer = []
 
     def __init__(self, name, level=logging.NOTSET):
         super().__init__(name, level)
@@ -32,6 +33,21 @@ class ParserLogger(logging.Logger):
         # -1 not log pos
         #  0 last token
         #  1 current token
+
+    @classmethod
+    def pop_line_buffer(cls, dev=None):
+        if cls.buffer:
+            data = cls.buffer.pop()
+            if dev:
+                if cls.buffer:
+                    cls.buffer[-1].extend(data)
+                else:
+                    for slf, *args in data:
+                        logging.Logger._log(slf, *args)
+
+    @classmethod
+    def append_line_buffer(cls):
+        cls.buffer.append([])
 
     @classmethod
     def set_is_crashed(cls, is_crashed):
@@ -64,7 +80,10 @@ class ParserLogger(logging.Logger):
             msg = '{!r} {}'.format(pos, msg)
         self.mode = 0
         self.log_position = True
-        super()._log(level, msg, args, exc_info, extra, stack_info)
+        if self.__class__.buffer:
+            self.__class__.buffer[-1].append((self, level, msg, args, exc_info, extra, stack_info))
+        else:
+            super()._log(level, msg, args, exc_info, extra, stack_info)
 
 
 logging.setLoggerClass(ParserLogger)
