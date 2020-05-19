@@ -60,13 +60,13 @@ class Position:
         return self.__copy__()
 
     def __str__(self):
-        return '<{}:{}>'.format(self.row, self.col)
+        return '<{: >2}:{: >2}>'.format(self.row, self.col)
 
 
 class Interval:
-    def __init__(self):
-        self._start = None
-        self._end = None
+    def __init__(self, start=None, end=None):
+        self._start = start and start.copy()
+        self._end = end and start.copy()
 
     @property
     def start(self):
@@ -101,6 +101,9 @@ class Interval:
         return '[{}-{}]'.format(self._start, self._end)
 
 
+EMPTY_INTERVAL = Interval(Position(''), Position(''))
+
+
 class Lexer:
     TOKENS = [
         tk.IntToken,
@@ -113,7 +116,7 @@ class Lexer:
         tk.SymbolToken
     ]
 
-    def __init__(self, pos, interval=None, last_interval=None, current_tokens=None):
+    def __init__(self, pos, interval=EMPTY_INTERVAL, last_interval=EMPTY_INTERVAL, current_tokens=None):
         self.pos = pos
 
         self.interval = interval

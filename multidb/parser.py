@@ -17,7 +17,7 @@ from .exceptions import NotSupported, FatalSyntaxException, SyntaxException
 
 # noinspection PyTypeChecker
 logger = logging.getLogger('parser')  # type: _logger.ParserLogger
-tree_logger = logging.getLogger('logger_tree')
+tree_logger = logging.getLogger('tree')
 
 
 class CmpLexer(lexer.Lexer):
@@ -25,7 +25,7 @@ class CmpLexer(lexer.Lexer):
     SAFE = 1
     OPTIONAL = 2
 
-    def __init__(self, pos, interval=None, last_interval=None, current_tokens=None):
+    def __init__(self, pos, interval=lexer.EMPTY_INTERVAL, last_interval=lexer.EMPTY_INTERVAL, current_tokens=None):
         super().__init__(pos, interval, last_interval, current_tokens)
         self.mode = self.STRICT
 
@@ -85,9 +85,6 @@ class Parser:
         Так как представленная грамматика не LL(1),
         то в затруднительных ситуациях используется
         выбор альтернатив при помощи отката
-
-        (Альтернативы необходимо подавать в порядке
-        уменьшения возможной длины разбора)
         """
         exceptions = []
         success = []
@@ -166,7 +163,6 @@ class Parser:
     def select_sublist(self):
         #   <qualified_asterisk>
         # | <derived_column>
-        # todo: Множества FIRST пересекаются
         data = self._choice_of_alternatives([self.qualified_asterisk, self.derived_column])
         return data
 

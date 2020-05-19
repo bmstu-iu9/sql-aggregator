@@ -137,7 +137,7 @@ class KeywordToken(IdentifierToken):
         return super().decode.upper()
 
     def check_type(self, other):
-        return isinstance(other, str) and self.decode == other
+        return (self.decode == other) if isinstance(other, str) else super().check_type(other)
 
 
 class SymbolToken(BaseToken):
@@ -151,7 +151,7 @@ class SymbolToken(BaseToken):
         return self.SYMBOL_TO_NAME[self.raw_value]
 
     def check_type(self, other):
-        return isinstance(other, str) and self.decode == other
+        return (self.decode == other) if isinstance(other, str) else super().check_type(other)
 
 
 class EndToken(BaseToken):
