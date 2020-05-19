@@ -9,6 +9,9 @@ sql-aggregator (MultiDB) позволяет в одном запросе ман�
 
 Поддерживаются следующие источники: PostgreSQL, MySQL, SQLite
 
+# Нерабочие конструкции
+1) `<boolean value expression> + <boolean value expression>`. `<boolean value expression>` необходимо указать в скобках
+
 # Полезные ссылки
 * [SQL стандарт 1999](http://web.cecs.pdx.edu/~len/sql1999.pdf)
 * [Документация PostgreSQL](https://www.postgresql.org/docs/)
