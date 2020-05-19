@@ -2,17 +2,17 @@ import logging
 from itertools import product
 
 from . import _logger
+from . import data_types as dt
 from . import dml
 from . import expression as expr
 from . import join as jn
 from . import keywords as kw
 from . import lexer
 from . import parse_data
-from . import predicates as ps
 from . import structures as st
 from . import symbols as ss
-from . import utils
 from . import token as tk
+from . import utils
 from .exceptions import NotSupported, FatalSyntaxException, SyntaxException
 
 # noinspection PyTypeChecker
@@ -75,6 +75,11 @@ class CmpLexer(lexer.Lexer):
 
 
 class Parser:
+    @classmethod
+    def build(cls, program):
+        lex = CmpLexer(lexer.Position(program))
+        return cls(lex)
+
     def __init__(self, lex: CmpLexer):
         logger.set_parser(self)
         self.token = lex
@@ -115,6 +120,13 @@ class Parser:
         logger.pop_line_buffer(True)
         logger.set_is_crashed(freeze_state)
         return data
+
+
+class SQLParser(Parser):
+
+    def __init__(self, lex: CmpLexer):
+        super().__init__(lex)
+        self.data = parse_data.ParseData()
 
     def program(self):
         #   <select>
@@ -194,7 +206,7 @@ class Parser:
         if self.token == kw.AS:
             self.token.next()
             name = self.token >> tk.IdentifierToken
-        elif self.token == tk.IdentifierToken and self.token != kw.FROM:
+        elif self.token == tk.IdentifierToken:
             name = self.token.next()
         expression.as_(name)
         return expression
@@ -227,10 +239,10 @@ class Parser:
         left = self.term()
         if self.token == ss.plus_sign:
             self.token.next()
-            cls = expr.AddNumericExpression
+            cls = expr.Add
         elif self.token == ss.minus_sign:
             self.token.next()
-            cls = expr.SubNumericExpression
+            cls = expr.Sub
         else:
             return left
         right = self.numeric_value_expression()
@@ -244,10 +256,10 @@ class Parser:
         left = self.factor()
         if self.token == ss.asterisk:
             self.token.next()
-            cls = expr.MulNumericExpression
+            cls = expr.Mul
         elif self.token == ss.solidus:
             self.token.next()
-            cls = expr.DivNumericExpression
+            cls = expr.Div
         else:
             return left
         right = self.term()
@@ -260,8 +272,7 @@ class Parser:
         if self.token == (ss.plus_sign, ss.minus_sign):
             sign = self.sign()
         primary = self.numeric_primary()
-        # Todo
-        # primary.set_sign(sign)
+        primary.set_sign(sign)
         return primary
 
     @utils.log(tree_logger)
@@ -284,7 +295,7 @@ class Parser:
         left = self.boolean_term()
         if self.token.optional >> kw.OR:
             right = self.boolean_value_expression()
-            return expr.OrBooleanExpression(left, right)
+            return expr.Or(left, right)
         return left
 
     @utils.log(tree_logger)
@@ -294,68 +305,75 @@ class Parser:
         left = self.boolean_factor()
         if self.token.optional >> kw.AND:
             right = self.boolean_term()
-            return expr.AndBooleanExpression(left, right)
+            return expr.And(left, right)
         return left
 
     @utils.log(tree_logger)
-    def boolean_factor(self):
+    def boolean_factor(self) -> dt.BooleanTest:
         # [ NOT ] <boolean_test>
         is_not = True if self.token.optional >> kw.NOT else False
         factor = self.boolean_test()
-        # TODO:
-        # factor.set_not(is_not)
+        factor.set_not(is_not)
         return factor
 
     @utils.log(tree_logger)
-    def boolean_test(self):
+    def boolean_test(self) -> dt.BooleanTest:
         # <boolean_primary> [ IS [ NOT ] <truth_value> ]
         primary = self.boolean_primary()
         if self.token.optional >> kw.IS:
             is_not = True if self.token.optional >> kw.NOT else False
             value = self.truth_value()
-            primary = expr.IsBooleanExpression(primary, value, is_not)
+            primary = expr.Is(primary, value)
+            primary.set_not(is_not)
         return primary
 
     @utils.log(tree_logger)
-    def truth_value(self):
+    def truth_value(self) -> dt.TruthValue:
         #   TRUE
         # | FALSE
         # | NULL
         # В стандарте вместо NULL используют UNKNOWN
-        return self.token >> (kw.TRUE, kw.FALSE, kw.NULL)
+        value = self.token >> (kw.TRUE, kw.FALSE, kw.NULL)
+        if value == kw.TRUE:
+            return True
+        elif value == kw.FALSE:
+            return False
+        return None
 
     @utils.log(tree_logger)
-    def boolean_primary(self):
+    def boolean_primary(self) -> dt.BooleanPrimary:
         #   <predicate>
-        # | <parenthesized_boolean_value_expression>
+        # | <parenthesized_value_expression>
         # | <nonparenthesized_value_expression_primary>
-        return self._choice_of_alternatives([
+        # Todo: parenthesized_value_expression вместо parenthesized_boolean_value_expression
+        alt, value = self._choice_of_alternatives([
             self.predicate,
-            self.parenthesized_boolean_value_expression,
+            self.parenthesized_value_expression,
             self.nonparenthesized_value_expression_primary,
         ])
+        return value
 
     @utils.log(tree_logger)
-    def predicate(self):
+    def predicate(self) -> dt.ComparisonPredicate:
         # <comparison_predicate>
         return self.comparison_predicate()
 
     @utils.log(tree_logger)
-    def comparison_predicate(self):
+    def comparison_predicate(self) -> dt.ComparisonPredicate:
         # <operand_comparison> <comp_op> <operand_comparison>
         left = self.operand_comparison()
         op = self.comp_op()
         right = self.operand_comparison()
-        return ps.ComparisonPredicate(left, right, op)
+        return expr.ComparisonPredicate(left, right, op)
 
     @utils.log(tree_logger)
-    def operand_comparison(self):
+    def operand_comparison(self) -> dt.ValueExpression:
         if self.token == ss.left_paren:
             return self.parenthesized_value_expression()
         return self.not_boolean_value_expression()
 
     @utils.log(tree_logger)
-    def comp_op(self):
+    def comp_op(self) -> str:
         #   <equals_operator>
         # | <not_equals_operator>
         # | <less_than_operator>
@@ -369,31 +387,32 @@ class Parser:
         )
 
     @utils.log(tree_logger)
-    def row_value_expression(self):
+    def row_value_expression(self) -> dt.RowValueSpecialCase:
         # <row_value_special_case>
         return self.row_value_special_case()
 
     @utils.log(tree_logger)
-    def row_value_special_case(self):
+    def row_value_special_case(self) -> dt.RowValueSpecialCase:
         #   <value_expression>
         # | <value_specification>
-        return self._choice_of_alternatives([self.value_expression, self.value_specification])
-
-    @utils.log(tree_logger)
-    def value_specification(self):
-        # <literal>
-        return self.literal()
-
-    @utils.log(tree_logger)
-    def parenthesized_boolean_value_expression(self):
-        # <left_paren> <boolean_value_expression> <right_paren>
-        self.token >> ss.left_paren
-        value = self.boolean_value_expression()
-        self.token >> ss.right_paren
+        alt, value = self._choice_of_alternatives([self.value_expression, self.value_specification])
         return value
 
     @utils.log(tree_logger)
-    def value_expression_primary(self):
+    def value_specification(self) -> dt.Literal:
+        # <literal>
+        return self.literal()
+
+    # @utils.log(tree_logger)
+    # def parenthesized_boolean_value_expression(self) -> dt.BooleanValueExpression:
+    #     # <left_paren> <boolean_value_expression> <right_paren>
+    #     self.token >> ss.left_paren
+    #     value = self.boolean_value_expression()
+    #     self.token >> ss.right_paren
+    #     return value
+
+    @utils.log(tree_logger)
+    def value_expression_primary(self) -> dt.ValueExpressionPrimary:
         #   <parenthesized_value_expression>
         # | <nonparenthesized_value_expression_primary>
         if self.token == ss.left_paren:
@@ -401,7 +420,7 @@ class Parser:
         return self.nonparenthesized_value_expression_primary()
 
     @utils.log(tree_logger)
-    def parenthesized_value_expression(self):
+    def parenthesized_value_expression(self) -> dt.ValueExpression:
         # <left_paren> <value_expression> <right_paren>
         self.token >> ss.left_paren
         data = self.value_expression()
@@ -409,20 +428,21 @@ class Parser:
         return data
 
     @utils.log(tree_logger)
-    def nonparenthesized_value_expression_primary(self):
+    def nonparenthesized_value_expression_primary(self) -> dt.NonparenthesizedValueExpressionPrimary:
         #   <unsigned_value_specification>
         # | <column_reference>
         if self.token == tk.IdentifierToken:
-            return self.column_reference()
-        return self.unsigned_value_specification()
+            return expr.Column(self.column_reference())
+        else:
+            return self.unsigned_value_specification()
 
     @utils.log(tree_logger)
-    def unsigned_value_specification(self):
+    def unsigned_value_specification(self) -> dt.UnsignedLiteral:
         # <unsigned_literal>
         return self.unsigned_literal()
 
     @utils.log(tree_logger)
-    def literal(self):
+    def literal(self) -> dt.Literal:
         #   <signed_numeric_literal>
         # | <general_literal>
         if self.token == (tk.IntToken, tk.FloatToken, ss.plus_sign, ss.plus_sign):
@@ -430,61 +450,62 @@ class Parser:
         return self.general_literal()
 
     @utils.log(tree_logger)
-    def signed_numeric_literal(self):
+    def signed_numeric_literal(self) -> dt.SignedNumericLiteral:
         # [ <sign> ] <unsigned_numeric_literal>
         sign = ss.plus_sign
         if self.token == (ss.plus_sign, ss.minus_sign):
             sign = self.sign()
         value = self.unsigned_numeric_literal()
-        if sign == ss.minus_sign:
-            value *= -1
+        value.set_sign(sign)
         return value
 
     @utils.log(tree_logger)
-    def unsigned_literal(self):
+    def unsigned_literal(self) -> dt.UnsignedLiteral:
         #   <unsigned_numeric_literal>
         # | <general_literal
-        if self.token == [tk.IntToken, tk.FloatToken]:
+        if self.token == (tk.IntToken, tk.FloatToken):
             return self.unsigned_numeric_literal()
         return self.general_literal()
 
     @utils.log(tree_logger)
-    def unsigned_numeric_literal(self):
+    def unsigned_numeric_literal(self) -> dt.UnsignedNumericLiteral:
         #   INTEGER
         # | FLOAT
-        return self.token >> (tk.IntToken, tk.FloatToken)
+        value = self.token >> (tk.FloatToken, tk.IntToken)
+        return expr.PrimaryValue.auto(value)
 
     @utils.log(tree_logger)
-    def general_literal(self):
+    def general_literal(self) -> dt.GeneralLiteral:
         #   <character_string_literal::STR>
         # | <datetime_literal::DT>
         # | <boolean_literal>
-        if self.token.optional >> kw.TRUE:
-            return True
-        elif self.token.optional >> kw.FALSE:
-            return False
-        elif self.token.optional >> kw.NULL:
-            return None
-        return self.token >> (tk.StringToken, tk.DateToken, tk.DatetimeToken)
+        value = self.token >> (kw.TRUE, kw.FALSE, kw.NULL, tk.StringToken, tk.DatetimeToken, tk.DateToken)
+        if value == kw.TRUE:
+            return expr.Bool(True)
+        elif value == kw.FALSE:
+            return expr.Bool(False)
+        elif value == kw.NULL:
+            return expr.Null()
+        return expr.PrimaryValue.auto(value)
 
     @utils.log(tree_logger)
-    def sign(self):
+    def sign(self) -> str:
         #   <plus_sign>
         # | <minus_sign>
         return self.token >> (ss.plus_sign, ss.minus_sign)
 
     @utils.log(tree_logger)
-    def column_reference(self):
+    def column_reference(self) -> dt.IdentifierChain:
         # <basic_identifier_chain>
         return self.basic_identifier_chain()
 
     @utils.log(tree_logger)
-    def basic_identifier_chain(self):
+    def basic_identifier_chain(self) -> dt.IdentifierChain:
         # <identifier_chain>
         return self.identifier_chain()
 
     @utils.log(tree_logger)
-    def identifier_chain(self):
+    def identifier_chain(self) -> dt.IdentifierChain:
         # <identifier::ID> [ { <period> <identifier::ID> }... ]
         chain = st.NameChain(self.token >> tk.IdentifierToken)
         while self.token.optional >> ss.period:
@@ -529,7 +550,8 @@ class Parser:
 
         accumulate = first
         for join in joins:
-            accumulate = join.set_left(accumulate)
+            join.set_left(accumulate)
+            accumulate = join
 
         return accumulate
 

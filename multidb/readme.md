@@ -132,3 +132,21 @@
 <table name> :: =
          <basic identifier chain>
 ```
+`<boolean primary>` (Стр. ???)
+------------------------------
+Причина - поддержка неявного приведения типов к Boolean
+
+Раньше:
+```
+<boolean primary> :: =
+         <predicate>
+       | <parenthesized boolean value expression>
+       | <nonparenthesized value expression primary>
+```
+Новая грамматика:
+```
+<boolean primary> :: =
+         <predicate>
+       | <parenthesized value expression>
+       | <nonparenthesized value expression primary>
+```

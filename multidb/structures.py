@@ -1,12 +1,7 @@
-class AsMixin:
-    def __init__(self, *args, **kwargs):
-        self.short_name = None
-
-    def as_(self, name):
-        self.short_name = name
+from . import mixins
 
 
-class NameChain(AsMixin):
+class NameChain(mixins.AsMixin):
     def __init__(self, *args):
         super().__init__()
         self.chain = list(args)
