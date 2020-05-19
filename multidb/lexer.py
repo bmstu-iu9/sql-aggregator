@@ -157,6 +157,12 @@ class Lexer:
                     for t, (size, match) in matches
                     if size == max_size
                 )
+                if any(t.kind == t.KEYWORD and t.is_reserved for t in tokens):
+                    tokens = tuple(
+                        t
+                        for t in tokens
+                        if t.kind != t.IDENTIFIER
+                    )
                 return tokens
 
             self.pos.skip_space()
