@@ -157,7 +157,7 @@ class SQLParser(Parser):
         self.token >> kw.SELECT
         select_list = self.select_list()
         kwargs = self.table_expression()
-        return dml.Selection(select_list=select_list, **kwargs)
+        return dml.Selection(meta=self.data, select_list=select_list, **kwargs)
 
     @utils.log(tree_logger)
     def select_list(self):
@@ -507,7 +507,7 @@ class SQLParser(Parser):
     @utils.log(tree_logger)
     def identifier_chain(self) -> dt.IdentifierChain:
         # <identifier::ID> [ { <period> <identifier::ID> }... ]
-        chain = st.NameChain(self.token >> tk.IdentifierToken)
+        chain = st.NamingChain(self.token >> tk.IdentifierToken)
         while self.token.optional >> ss.period:
             chain.push_last(self.token >> tk.IdentifierToken)
         return chain
@@ -713,3 +713,108 @@ class SQLParser(Parser):
     @utils.log(tree_logger)
     def delete(self):
         raise NotSupported
+
+
+class IndexParser(Parser):
+
+    def program(self):
+        self.token.next()
+        self.token >> kw.CREATE
+        is_unique = self.token.optional >> kw.UNIQUE
+        self.token >> kw.INDEX
+        if self.token.optional >> kw.IF:
+            self.token >> kw.NOT
+            self.token >> kw.EXISTS
+            name = self.token >> tk.IdentifierToken
+        else:
+            name = self.token.optional >> tk.IdentifierToken
+        self.token >> kw.ON
+        is_only = self.token.optional >> kw.ONLY
+        table_name = self.naming_chain()
+
+        method = self.token.optional >> kw.USING
+        if method:
+            method = self.token >> [kw.BTREE, kw.HASH, kw.GIST, kw.SPGIST, kw.GIN, kw.BRIN]
+
+        self.token >> ss.left_paren
+        columns = self.columns()
+        self.token >> ss.right_paren
+
+        '''
+        include = self.token.optional >> kw.INCLUDE
+        if include:
+            self.token >> ss.left_paren
+            include = self.column_list()
+            self.token >> ss.right_paren
+
+        storage_parameters = self.token.optional >> kw.WITH
+        if storage_parameters:
+            self.token >> ss.left_paren
+            storage_parameters = self.storage_parameters()
+            self.token >> ss.right_paren
+
+        table_space = self.token.optional >> kw.TABLESPACE
+        if table_space:
+            table_space = self.token >> tk.IdentifierToken
+
+        predicate = self.token.optional >> kw.WHERE
+        if predicate:
+            predicate = self.predicate()
+        '''
+        return columns, is_unique, method
+
+    def column_list(self):
+        data = [self.token >> tk.IdentifierToken]
+        while self.token.optional >> ss.comma:
+            data.append(self.token >> tk.IdentifierToken)
+        return data
+
+    def columns(self):
+        data = [self.column()]
+        while self.token.optional >> ss.comma:
+            data.append(self.column())
+        return data
+
+    def column(self):
+        if self.token.optional >> ss.left_paren:
+            column = self.expression()
+            self.token >> ss.right_paren
+        else:
+            column = self.token >> tk.IdentifierToken
+
+        collate = self.token.optional >> kw.COLLATE
+        if collate:
+            collate = self.token >> tk.IdentifierToken
+
+        opclass = self.token.optional >> tk.IdentifierToken
+        asc_desc = self.token.optional >> (kw.ASC, kw.DESC)
+        nulls = self.token.optional >> kw.NULLS
+        if nulls:
+            nulls = self.token >> [kw.FIRST, kw.LAST]
+
+        return column, collate, opclass, asc_desc, nulls
+
+    def naming_chain(self) -> dt.IdentifierChain:
+        # <identifier::ID> [ { <period> <identifier::ID> }... ]
+        chain = st.NamingChain(self.token >> tk.IdentifierToken)
+        while self.token.optional >> ss.period:
+            chain.push_last(self.token >> tk.IdentifierToken)
+        return chain
+
+    def storage_parameters(self):
+        data = [self.storage_parameter()]
+        if self.token.optional >> ss.comma:
+            data.append(self.storage_parameter())
+        return data
+
+    def storage_parameter(self):
+        key = self.token >> tk.IdentifierToken
+        self.token >> ss.equals_operator
+        value = self.token >> tk.IdentifierToken
+        return key, value
+
+    def expression(self):
+        raise NotImplementedError
+
+    def predicate(self):
+        raise NotImplementedError
