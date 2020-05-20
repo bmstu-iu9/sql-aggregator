@@ -4,7 +4,7 @@ from typing import Union
 
 from . import mixins as mx
 from . import symbols as ss
-from .structures import NameChain
+from .structures import NamingChain
 
 
 class BaseExpression(mx.AsMixin, mx.SignMixin, mx.NotMixin):
@@ -49,7 +49,7 @@ class PrimaryValue(BaseExpression):
             return Bool(value)
         elif value is None:
             return Null()
-        elif isinstance(value, NameChain):
+        elif isinstance(value, NamingChain):
             return Column(value)
         raise ValueError('Invalid data type: {}({})'.format(type(value), value))
 

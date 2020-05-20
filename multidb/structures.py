@@ -1,7 +1,7 @@
 from . import mixins
 
 
-class NameChain(mixins.AsMixin):
+class NamingChain(mixins.AsMixin):
     def __init__(self, *args):
         super().__init__()
         self.chain = list(args)
@@ -10,7 +10,7 @@ class NameChain(mixins.AsMixin):
     def __map_other(other):
         return (
             other.chain
-            if isinstance(other, NameChain) else
+            if isinstance(other, NamingChain) else
             list(other)
             if isinstance(other, (list, tuple)) else
             [other]
@@ -22,6 +22,9 @@ class NameChain(mixins.AsMixin):
     def push_last(self, other):
         self.chain = self.chain + self.__map_other(other)
 
+    def get_data(self):
+        return tuple(self.chain)
+
     def __repr__(self):
         return '{}({})'.format(self.__class__.__name__, self)
 
@@ -29,16 +32,54 @@ class NameChain(mixins.AsMixin):
         return '.'.join(self.chain)
 
 
-class Schema:
-    def __init__(self, name: str, tables=None):
+class DBMS:
+    def __init__(self, name, dbs):
         self.name = name
-        self.tables = tables or {}
+        self._dbs = dbs
+
+
+class DB:
+    def __init__(self, name: str, dbms: DBMS, schemas=None):
+        self.name = name
+        self.dbms = dbms
+        self._schemas = schemas
+
+    @property
+    def schemas(self):
+        if self._schemas is None:
+            self._schemas = self.get_all_schemas()
+        return self._schemas
+
+    def get_all_schemas(self):
+        pass
+
+
+class Schema:
+    default = 'public'
+
+    def __init__(self, name: str, db: DB, tables=None):
+        self.name = name
+        self.db = db
+        self._tables = tables
+
+    @property
+    def tables(self):
+        if self._tables is None:
+            self._tables = self.get_all_tables()
+        return self._tables
+
+    def get_all_tables(self):
+        pass
 
 
 class Table:
-    def __init__(self, name: str, columns=None):
+    def __init__(self, name: str, schema: Schema, columns=None):
         self.name = name
+        self.schema = schema
         self.columns = columns or {}
+
+    def get_column(self, column):
+        pass
 
 
 class Column:

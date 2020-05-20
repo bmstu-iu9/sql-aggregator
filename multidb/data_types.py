@@ -11,7 +11,7 @@ GeneralLiteral = expr.PrimaryValue
 SignedNumericLiteral = expr.PrimaryValue
 UnsignedNumericLiteral = expr.PrimaryValue
 
-IdentifierChain = st.NameChain
+IdentifierChain = st.NamingChain
 TruthValue = Union[bool, None]
 
 NumericValueExpression = Union[expr.NumericExpression, expr.SimpleExpression]
