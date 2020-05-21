@@ -3,8 +3,6 @@ from collections import namedtuple
 from itertools import groupby
 from operator import itemgetter
 
-import pyodbc
-
 from .parser import IndexParser, kw
 
 
@@ -47,44 +45,41 @@ class BaseDialect:
         "order by ordinal_position;"
     )
 
-    @classmethod
-    def without_conn_string(cls, server, database, user, password, driver=None):
-        driver = driver or cls.DBMS_TO_DRIVER[cls.__name__]
+    def conn_str(self, database):
+        driver = self.driver or self.DBMS_TO_DRIVER[self.__class__.__name__]
         conn_str = ';'.join(
             '='.join([k, v])
             for k, v in [
                 ('DRIVER', driver),
                 ('DATABASE', database),
-                ('SERVER', server),
-                ('UID', user),
-                ('PWD', password),
+                ('SERVER', self.server),
+                ('UID', self.user),
+                ('PWD', self.password),
             ]
             if v
         )
-        return cls(conn_str)
+        return conn_str
 
-    def __init__(self, conn_str):
-        self.connection: pyodbc.Connection = pyodbc.connect(conn_str)
-        self.default_cursor: pyodbc.Cursor = self.connection.cursor()
+    def __init__(self, server, user, password, driver=None):
+        self.server = server
+        self.user = user
+        self.password = password
+        self.driver = driver
 
-    def all_schemas(self):
-        self.default_cursor.execute(self.SQL_GET_SCHEMAS)
-        return [schema for schema, in self.default_cursor.fetchall()]
+    def all_schemas(self, cursor):
+        cursor.execute(self.SQL_GET_SCHEMAS)
+        return [schema for schema, in cursor.fetchall()]
 
-    def all_tables(self, schema):
-        self.default_cursor.execute(self.SQL_GET_TABLES.format(schema=schema))
-        return [schema for schema, in self.default_cursor.fetchall()]
+    def all_tables(self, cursor, schema):
+        cursor.execute(self.SQL_GET_TABLES.format(schema=schema))
+        return [schema for schema, in cursor.fetchall()]
 
-    def all_columns(self, schema, table):
-        self.default_cursor.execute(self.SQL_GET_COLUMNS.format(schema=schema, table=table))
-        return [(name, is_null, dtype) for name, is_null, dtype in self.default_cursor.fetchall()]
+    def all_columns(self, cursor, schema, table):
+        cursor.execute(self.SQL_GET_COLUMNS.format(schema=schema, table=table))
+        return [(name, bool(is_null), dtype) for name, is_null, dtype in cursor.fetchall()]
 
-    def get_indexes(self, schema, table):
-        return
-
-    def __del__(self):
-        self.default_cursor.close()
-        self.connection.close()
+    def get_indexes(self, cursor, schema, table):
+        return []
 
 
 class PostgreSQL(BaseDialect):
@@ -93,7 +88,7 @@ class PostgreSQL(BaseDialect):
         'btree': Index.BTREE
     }
 
-    def get_indexes(self, schema, table):
+    def get_indexes(self, cursor, schema, table):
         query = (
             "select"
             "  indexname"
@@ -102,9 +97,9 @@ class PostgreSQL(BaseDialect):
             "where "
             "schemaname='{}' and tablename='{}';"
         ).format(schema, table)
-        self.default_cursor.execute(query)
+        cursor.execute(query)
         indexes = []
-        for name, define, in self.default_cursor.fetchall():
+        for name, define, in cursor.fetchall():
             parser = IndexParser.build(define)
             try:
                 data = parser.program()
@@ -139,26 +134,26 @@ class MySQL(BaseDialect):
         'btree': Index.BTREE
     }
 
-    def get_indexes(self, schema, table):
+    def get_indexes(self, cursor, schema, table):
         query = (
             "select"
-            "  index_name"  # 0
+            "  index_name"      # 0
             ", not non_unique"  # 1
-            ", collation"  # 2
-            ", index_type"  # 3
-            ", column_name"  # 4
-            ", seq_in_index"  # 5
+            ", collation"       # 2
+            ", index_type"      # 3
+            ", column_name"     # 4
+            ", seq_in_index"    # 5
             "from information_schema.statistics "
             "where "
             "table_schema='{}' "
             "and table_name='{}' "
             "order by index_name, seq_in_index;"
         ).format(schema, table)
-        self.default_cursor.execute(query)
+        cursor.execute(query)
         return [
             Index(group, columns, is_unique, kind)
             for group, data in groupby(
-                self.default_cursor.fetchall(),
+                cursor.fetchall(),
                 key=itemgetter(0)
             )
             for columns, uniques, index_types in zip(*[
