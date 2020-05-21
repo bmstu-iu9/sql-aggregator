@@ -1,4 +1,7 @@
 class ParseException(Exception):
+    """
+    Ошбка лексера
+    """
     pass
 
 
@@ -10,13 +13,31 @@ class ParseDatetimeException(ParseException):
     pass
 
 
-class NotSupported(Exception):
-    pass
-
-
 class SyntaxException(Exception):
+    """
+    Ошибка парсера
+    """
     pass
 
 
 class FatalSyntaxException(SyntaxException):
+    pass
+
+
+class SemanticException(Exception):
+    """
+    Ошибка в дереве разбора
+    """
+    pass
+
+
+class WrongNamingChain(SemanticException):
+    pass
+
+
+class NotSupported(Exception):
+    pass
+
+
+class UnreachableException(Exception):
     pass

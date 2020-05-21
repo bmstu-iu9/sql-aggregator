@@ -1,116 +1,115 @@
-from . import mixins
+import logging
 
+import pyodbc
+import pypika as pk
+from pypika import dialects as pika_dialects
 
-class NamingChain(mixins.AsMixin):
-    def __init__(self, *args):
-        super().__init__()
-        self.chain = list(args)
-
-    @staticmethod
-    def __map_other(other):
-        return (
-            other.chain
-            if isinstance(other, NamingChain) else
-            list(other)
-            if isinstance(other, (list, tuple)) else
-            [other]
-        )
-
-    def push_first(self, other):
-        self.chain = self.__map_other(other) + self.chain
-
-    def push_last(self, other):
-        self.chain = self.chain + self.__map_other(other)
-
-    def get_data(self):
-        return tuple(self.chain)
-
-    def __repr__(self):
-        return '{}({})'.format(self.__class__.__name__, self)
-
-    def __str__(self):
-        return '.'.join(self.chain)
+from . import dialect
+from .exceptions import SemanticException
+from . import mixins as mx
 
 
 class DBMS:
-    def __init__(self, name, dbs):
+    TYPE_TO_DIALECT = {
+        'psql':  dialect.PostgreSQL,
+        'mysql': dialect.MySQL,
+    }
+    TYPE_TO_PIKA = {
+        'psql':  pika_dialects.PostgreSQLQuery,
+        'mysql': pika_dialects.MySQLQuery
+    }
+
+    def __init__(self, name, connect_data):
+        kind_dbms = connect_data.pop('type').lower()
+        self.dialect = self.TYPE_TO_DIALECT[kind_dbms](**connect_data)
+        self.sql = self.TYPE_TO_PIKA[kind_dbms]
+
         self.name = name
-        self._dbs = dbs
+        self.connections = {}
 
+    def connect(self, db):
+        conn = self.connections.get(db)
+        if conn is None:
+            self.connections[db] = conn = pyodbc.connect(self.dialect.conn_str(db))
+        return conn
 
-class DB:
-    def __init__(self, name: str, dbms: DBMS, schemas=None):
-        self.name = name
-        self.dbms = dbms
-        self._schemas = schemas
-
-    @property
-    def schemas(self):
-        if self._schemas is None:
-            self._schemas = self.get_all_schemas()
-        return self._schemas
-
-    def get_all_schemas(self):
-        pass
-
-
-class Schema:
-    default = 'public'
-
-    def __init__(self, name: str, db: DB, tables=None):
-        self.name = name
-        self.db = db
-        self._tables = tables
-
-    @property
-    def tables(self):
-        if self._tables is None:
-            self._tables = self.get_all_tables()
-        return self._tables
-
-    def get_all_tables(self):
-        pass
+    def __del__(self):
+        for conn in self.connections.values():
+            conn.close()
 
 
 class Table:
-    def __init__(self, name: str, schema: Schema, columns=None):
-        self.name = name
+    logger = logging.getLogger('table')
+
+    def __init__(self, dbms: DBMS, db: str, schema: str, table: str):
+        self.dbms = dbms
+        self.connection = dbms.connect(db)
+        self.cursor: pyodbc.Cursor = self.connection.cursor()
+
+        self.db = db
         self.schema = schema
-        self.columns = columns or {}
+        self.table = table
 
-    def get_column(self, column):
-        pass
+        self._db = pk.Database(db)
+        self._schema = pk.Schema(schema, self._db)
+        self._table = pk.Table(table, self._schema)
+
+        self.indexes = self.dbms.dialect.get_indexes(self.cursor, schema, table)
+        self.columns, self.name_to_column = self.__get_columns()
+
+        try:
+            self.test_table(self.cursor)
+        except Exception as ex:
+            msg = 'Table {}.{}.{} not found:\nException:{}'.format(db, schema, table, ex)
+            self.logger.error(msg)
+            raise SemanticException(msg)
+
+        self.use_columns = {}
+
+    def __get_columns(self):
+        raw_columns = self.dbms.dialect.all_columns(self.cursor, self.schema, self.table)
+        if not raw_columns:
+            msg = 'Columns not found for table {}.{}.{}'.format(self.db, self.schema, self.table)
+            self.logger.error(msg)
+            raise SemanticException(msg)
+        columns = []
+        name_to_column = {}
+        for column_name, is_null, dtype in raw_columns:
+            found_index = None
+            for index in self.indexes:
+                for idx_column in index.columns:
+                    if column_name == idx_column.name:
+                        found_index = index
+                        break
+                else:
+                    continue
+                break
+            column = Column(self, column_name, is_null, dtype, found_index)
+            columns.append(column)
+            name_to_column[column_name] = column
+        return columns, name_to_column
+
+    def test_table(self, cursor):
+        query = (self.dbms.sql
+                 .from_(self._table)
+                 .select('*')
+                 .limit(1))
+        cursor.execute(query.get_sql())
+        cursor.fetchall()
+
+    def __del__(self):
+        self.cursor.close()
 
 
-class Column:
-    PRIMARY = 0
-    INDEXED = 1
-    COMMON = 2
-
-    @classmethod
-    def primary(cls, name: str):
-        return Column(name, cls.PRIMARY)
-
-    @property
-    def is_primary(self):
-        return self.kind == self.PRIMARY
-
-    @classmethod
-    def indexed(cls, name: str):
-        return Column(name, cls.INDEXED)
-
-    @property
-    def is_indexed(self):
-        return self.kind == self.INDEXED
-
-    @classmethod
-    def common(cls, name: str):
-        return Column(name, cls.COMMON)
-
-    @property
-    def is_common(self):
-        return self.kind == self.COMMON
-
-    def __init__(self, name: str, kind: int):
+class Column(mx.AsMixin):
+    def __init__(self, table: Table, name: str, is_null: bool, dtype: int, index=None):
+        super().__init__()
         self.name = name
-        self.kind = kind
+        self.is_null = is_null
+        self.dtype = dtype
+
+        self.index = index
+        self.table = table
+
+    def copy(self, table):
+        return Column(table, self.name, self.is_null, self.dtype, self.index)

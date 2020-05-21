@@ -1,7 +1,7 @@
 from typing import Union
 
 from . import expression as expr
-from . import structures as st
+from . import utils
 
 NonparenthesizedValueExpressionPrimary = expr.PrimaryValue
 
@@ -11,7 +11,7 @@ GeneralLiteral = expr.PrimaryValue
 SignedNumericLiteral = expr.PrimaryValue
 UnsignedNumericLiteral = expr.PrimaryValue
 
-IdentifierChain = st.NamingChain
+IdentifierChain = utils.NamingChain
 TruthValue = Union[bool, None]
 
 NumericValueExpression = Union[expr.NumericExpression, expr.SimpleExpression]
