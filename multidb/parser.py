@@ -9,7 +9,6 @@ from . import join as jn
 from . import keywords as kw
 from . import lexer
 from . import parse_data
-from . import structures as st
 from . import symbols as ss
 from . import token as tk
 from . import utils
@@ -113,7 +112,9 @@ class Parser:
             )
             raise FatalSyntaxException(msg)
 
-        data, buff, token = max(success, key=lambda x: x[-1].pos.idx)
+        # Выбирается альтернатива с наибольшей длиной
+        # Если таких нексколько, то выбирается с минимальным индексом
+        data, buff, token = max(success, key=lambda x: (x[-1].pos.idx, -x[0][0]))
         self.token = token
 
         logger.append_line_buffer(buff)
@@ -147,7 +148,7 @@ class SQLParser(Parser):
 
         elif self.token == kw.DELETE:
             data = self.delete()
-
+        _ = self.token.optional >> ss.semicolon
         self.token >> tk.EndToken
         return data
 
@@ -157,7 +158,8 @@ class SQLParser(Parser):
         self.token >> kw.SELECT
         select_list = self.select_list()
         kwargs = self.table_expression()
-        return dml.Selection(meta=self.data, select_list=select_list, **kwargs)
+        # Todo
+        return dml.Select(None, select_list=select_list, **kwargs)
 
     @utils.log(tree_logger)
     def select_list(self):
@@ -175,8 +177,9 @@ class SQLParser(Parser):
     def select_sublist(self):
         #   <qualified_asterisk>
         # | <derived_column>
-        data = self._choice_of_alternatives([self.qualified_asterisk, self.derived_column])
-        return data
+        alt, data = self._choice_of_alternatives([self.qualified_asterisk, self.derived_column])
+        is_qualified_asterisk = alt == 0
+        return is_qualified_asterisk, data
 
     @utils.log(tree_logger)
     def qualified_asterisk(self):
@@ -196,7 +199,7 @@ class SQLParser(Parser):
                 break
             data.append(el)
             self.token >> ss.period
-        return data
+        return utils.NamingChain(*data)
 
     @utils.log(tree_logger)
     def derived_column(self):
@@ -267,12 +270,13 @@ class SQLParser(Parser):
 
     @utils.log(tree_logger)
     def factor(self):
-        # [ <sign> ] <numeric_primary>
-        sign = ss.plus_sign
+        # [ <minus_sign> ] <numeric_primary>
+        sign = self.token.optional >> ss.minus_sign
         if self.token == (ss.plus_sign, ss.minus_sign):
             sign = self.sign()
         primary = self.numeric_primary()
-        primary.set_sign(sign)
+        if sign is not None:
+            primary = expr.UnarySign(primary, sign)
         return primary
 
     @utils.log(tree_logger)
@@ -313,7 +317,8 @@ class SQLParser(Parser):
         # [ NOT ] <boolean_test>
         is_not = True if self.token.optional >> kw.NOT else False
         factor = self.boolean_test()
-        factor.set_not(is_not)
+        if is_not:
+            factor = expr.NotExpression(factor)
         return factor
 
     @utils.log(tree_logger)
@@ -324,7 +329,8 @@ class SQLParser(Parser):
             is_not = True if self.token.optional >> kw.NOT else False
             value = self.truth_value()
             primary = expr.Is(primary, value)
-            primary.set_not(is_not)
+            if is_not:
+                primary = expr.NotExpression(primary)
         return primary
 
     @utils.log(tree_logger)
@@ -456,7 +462,8 @@ class SQLParser(Parser):
         if self.token == (ss.plus_sign, ss.minus_sign):
             sign = self.sign()
         value = self.unsigned_numeric_literal()
-        value.set_sign(sign)
+        if sign is not None:
+            value = expr.UnarySign(value, sign)
         return value
 
     @utils.log(tree_logger)
@@ -507,7 +514,7 @@ class SQLParser(Parser):
     @utils.log(tree_logger)
     def identifier_chain(self) -> dt.IdentifierChain:
         # <identifier::ID> [ { <period> <identifier::ID> }... ]
-        chain = st.NamingChain(self.token >> tk.IdentifierToken)
+        chain = utils.NamingChain(self.token >> tk.IdentifierToken)
         while self.token.optional >> ss.period:
             chain.push_last(self.token >> tk.IdentifierToken)
         return chain
@@ -796,7 +803,7 @@ class IndexParser(Parser):
 
     def naming_chain(self) -> dt.IdentifierChain:
         # <identifier::ID> [ { <period> <identifier::ID> }... ]
-        chain = st.NamingChain(self.token >> tk.IdentifierToken)
+        chain = utils.NamingChain(self.token >> tk.IdentifierToken)
         while self.token.optional >> ss.period:
             chain.push_last(self.token >> tk.IdentifierToken)
         return chain

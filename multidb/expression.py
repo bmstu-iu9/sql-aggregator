@@ -4,10 +4,10 @@ from typing import Union
 
 from . import mixins as mx
 from . import symbols as ss
-from .structures import NamingChain
+from . import utils
 
 
-class BaseExpression(mx.AsMixin, mx.SignMixin, mx.NotMixin):
+class BaseExpression(mx.AsMixin):
     @property
     def convolution(self):
         return self
@@ -49,7 +49,7 @@ class PrimaryValue(BaseExpression):
             return Bool(value)
         elif value is None:
             return Null()
-        elif isinstance(value, NamingChain):
+        elif isinstance(value, utils.NamingChain):
             return Column(value)
         raise ValueError('Invalid data type: {}({})'.format(type(value), value))
 
@@ -58,26 +58,13 @@ class PrimaryValue(BaseExpression):
         self.value = value
 
     def __repr__(self):
-        return '{}{}({})'.format('not ' if self.is_not else '', self.__class__.__name__, self.value)
+        return '{}({})'.format(self.__class__.__name__, self.value)
 
 
 class PrimaryNumeric(PrimaryValue):
-
-    @property
-    def convolution(self):
-        if self.is_not:
-            return Bool(bool(self.value))
-        if self.sign == -1:
-            self.value *= -1
-            self.sign = 1
-        return self
-
     @property
     def to_bool(self):
-        val = bool(self.value)
-        if self.is_not:
-            val = not val
-        return Bool(val)
+        return Bool(bool(self.value))
 
 
 class Int(PrimaryNumeric):
@@ -107,14 +94,6 @@ class Bool(PrimaryValue):
     KIND = PrimaryValue.BOOL
 
     @property
-    def convolution(self):
-        assert self.sign == 1
-        if self.is_not:
-            self.value = not self.value
-            self.is_not = False
-        return self
-
-    @property
     def to_int(self):
         return Int(int(self.value))
 
@@ -140,6 +119,31 @@ class SimpleExpression(BaseExpression):
 
 class NumericExpression(BaseExpression):
     logger = logging.getLogger('numeric_expression')
+
+
+class UnarySign(NumericExpression):
+    def __init__(self, value: BaseExpression, sign, *args, **kwargs):
+        assert sign in (ss.minus_sign, ss.plus_sign)
+        super().__init__(*args, **kwargs)
+        self.value = value
+        self.is_minus = sign == ss.minus_sign
+        self.sign = -1 if self.is_minus else 1
+
+    @property
+    def convolution(self):
+        self.value = self.value.convolution.to_int
+        if isinstance(self.value, Int):
+            return Int(self.value.value * self.sign)
+        elif isinstance(self.value, Float):
+            return Float(-self.value.value * self.sign)
+        elif isinstance(self.value, UnarySign):
+            check = self.is_minus ^ self.value.is_minus
+            sign = ss.minus_sign if check else ss.plus_sign
+            return UnarySign(self.value.value, sign)
+        return self
+
+    def __repr__(self):
+        return '{}CastToInt({!r})'.format('-' if self.is_minus else '', self.value)
 
 
 class DoubleNumericExpression(NumericExpression):
@@ -168,8 +172,6 @@ class DoubleNumericExpression(NumericExpression):
         # Если два числа то производим операцию над ними
         if isinstance(self.left, PrimaryNumeric) and isinstance(self.right, PrimaryNumeric):
             value = self.action(self.left.value, self.right.value)
-            if self.is_not:
-                return Bool(not bool(value))
             if isinstance(self.left, Float) or isinstance(self.right, Float):
                 return Float(value)
             return Int(value)
@@ -181,7 +183,7 @@ class DoubleNumericExpression(NumericExpression):
         return self.special_rules()
 
     def __repr__(self):
-        return '{}({!r} {} {!r})'.format('not ' if self.is_not else '', self.left, self.op, self.right)
+        return '({!r} {} {!r})'.format(self.left, self.op, self.right)
 
 
 class Add(DoubleNumericExpression):
@@ -192,10 +194,8 @@ class Add(DoubleNumericExpression):
 
     def special_rules(self):
         if isinstance(self.left, PrimaryNumeric) and self.left.value == 0:
-            self.right.set_not(self.is_not)
             return self.right
         if isinstance(self.right, PrimaryNumeric) and self.right.value == 0:
-            self.left.set_not(self.is_not)
             return self.left
         return self
 
@@ -208,10 +208,8 @@ class Sub(DoubleNumericExpression):
 
     def special_rules(self):
         if isinstance(self.left, PrimaryNumeric) and self.left.value == 0:
-            self.right.set_not(self.is_not)
-            return self.right
+            return UnarySign(self.right, ss.minus_sign)
         if isinstance(self.right, PrimaryNumeric) and self.right.value == 0:
-            self.left.set_not(self.is_not)
             return self.left
         return self
 
@@ -227,7 +225,7 @@ class Mul(DoubleNumericExpression):
             isinstance(self.left, PrimaryNumeric) and self.left.value == 0 or
             isinstance(self.right, PrimaryNumeric) and self.right.value == 0
         ):
-            return True if self.is_not else Int(0)
+            return Int(0)
         return self
 
 
@@ -241,9 +239,8 @@ class Div(DoubleNumericExpression):
         if isinstance(self.right, PrimaryNumeric) and self.right.value == 0:
             return Null()
         if isinstance(self.left, PrimaryNumeric) and self.left.value == 0:
-            return True if self.is_not else Int(0)
+            return Int(0)
         if isinstance(self.right, PrimaryNumeric) and self.right.value == 1:
-            self.left.set_not(self.is_not)
             return self.left
         return self
 
@@ -273,6 +270,28 @@ class BooleanExpression(BaseExpression):
     logger = logging.getLogger('boolean_expression')
 
 
+class NotExpression(BooleanExpression):
+
+    def __init__(self, value: BaseExpression, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.value = value
+
+    @property
+    def convolution(self):
+        self.value = self.value.convolution.to_bool
+        if isinstance(self.value, ComparisonPredicate):
+            self.value.op = self.value.MAP_NOT[self.value.op]
+            return self.value
+        elif isinstance(self.value, Bool):
+            return Bool(not self.value.value)
+        elif isinstance(self.value, Null):
+            return Null()
+        return self
+
+    def __repr__(self):
+        return 'not {!r}'.format(self.value)
+
+
 class DoubleBooleanExpression(BooleanExpression):
     AND = 'and'
     OR = 'or'
@@ -285,7 +304,7 @@ class DoubleBooleanExpression(BooleanExpression):
         self.right = right
 
     def __repr__(self):
-        return '{}({!r} {} {!r})'.format('not ' if self.is_not else '', self.left, self.op, self.right)
+        return '({!r} {} {!r})'.format(self.left, self.op, self.right)
 
 
 class Or(DoubleBooleanExpression):
@@ -300,13 +319,13 @@ class Or(DoubleBooleanExpression):
             isinstance(self.left, Bool) and self.left.value or
             isinstance(self.right, Bool) and self.right.value
         ):
-            return Bool(False) if self.is_not else Bool(True)
+            return Bool(True)
 
         if (
             isinstance(self.left, Bool) and not self.left.value and
             isinstance(self.right, Bool) and not self.right.value
         ):
-            return Bool(True) if self.is_not else Bool(False)
+            return Bool(False)
 
         if isinstance(self.left, Null) or isinstance(self.right, Null):
             return Null()
@@ -326,13 +345,13 @@ class And(DoubleBooleanExpression):
             isinstance(self.left, Bool) and self.left.value and
             isinstance(self.right, Bool) and self.right.value
         ):
-            return Bool(False) if self.is_not else Bool(True)
+            return Bool(True)
 
         if (
             isinstance(self.left, Bool) and not self.left.value or
             isinstance(self.right, Bool) and not self.right.value
         ):
-            return Bool(True) if self.is_not else Bool(False)
+            return Bool(False)
 
         if isinstance(self.left, Null) or isinstance(self.right, Null):
             return Null()
@@ -348,10 +367,10 @@ class Is(DoubleBooleanExpression):
         self.left = self.left.convolution.to_bool
         if isinstance(self.left, Bool):
             value = self.left.value == self.right
-            return Bool(not value) if self.is_not else Bool(value)
+            return Bool(value)
         elif isinstance(self.left, Null):
-            value = self.right is None
-            return Bool(not value) if self.is_not else Bool(value)
+            value = self.left is None
+            return Bool(value)
         return self
 
 
@@ -381,17 +400,10 @@ class ComparisonPredicate(BasePredicate):
     def convolution(self):
         self.left = self.left.convolution
         self.right = self.right.convolution
-        if self.is_not:
-            self.op = self.MAP_NOT[self.op]
         return self
 
     def __repr__(self):
-        return '{}({!r} {} {!r})'.format(
-            'not ' if self.is_not else '',
-            self.left,
-            ss.NAME_TO_SYMBOL.get(self.op),
-            self.right
-        )
+        return '({!r} {} {!r})'.format(self.left, ss.NAME_TO_SYMBOL.get(self.op), self.right)
 
 
 class StringExpression(BaseExpression):
