@@ -26,3 +26,9 @@ loggers:
   tree:
     level: DEBUG
     handlers: [file]
+  selection:
+    level: DEBUG
+    handlers: [console]
+  psql_dialect:
+    level: DEBUG
+    handlers: [console]

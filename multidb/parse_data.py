@@ -1,3 +1,5 @@
 class ParseData:
     def __init__(self):
-        pass
+        self.dbs = {}
+        self.schemas = {}
+        self.tables = {}

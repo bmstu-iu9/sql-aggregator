@@ -7,7 +7,7 @@ from .parser import IndexParser, kw
 
 
 class Index:
-    BTREE = 0
+    BTREE = 'btree'
 
     def __init__(self, name, columns, is_unique, kind):
         self.name = name
@@ -15,11 +15,30 @@ class Index:
         self.is_unique = is_unique
         self.kind = kind
 
+    def __repr__(self):
+        return '{}(name={}, columns=({}), is_unique={})'.format(
+            self.kind,
+            self.name,
+            ', '.join(
+                '{}({})'.format(c.name, c.order)
+                for c in self.columns
+            ),
+            self.is_unique
+
+        )
+
 
 IndexColumn = namedtuple('IndexColumn', 'name order')
 
 
 class BaseDialect:
+    logger = logging.getLogger('base_dialect')
+    BOOL = 'bool'
+    LONG = 'long'
+    INT = 'int'
+    STRING = 'string'
+    TYPES = {}
+
     DBMS_TO_DRIVER = {}
 
     SQL_GET_SCHEMAS = (
@@ -35,9 +54,11 @@ class BaseDialect:
     )
     SQL_GET_COLUMNS = (
         "select "
-        "  column_name"
-        ", is_nullable"
-        ", data_type"
+        "  column_name "
+        ", is_nullable "
+        ", data_type "
+        ", character_maximum_length "
+        ", character_octet_length "
         "from information_schema.columns "
         "where "
         "table_schema = '{schema}' "
@@ -51,19 +72,21 @@ class BaseDialect:
             '='.join([k, v])
             for k, v in [
                 ('DRIVER', driver),
-                ('DATABASE', database),
                 ('SERVER', self.server),
-                ('UID', self.user),
-                ('PWD', self.password),
+                ('PORT', self.port),
+                ('DATABASE', database),
+                ('UID', self.uid),
+                ('PWD', self.pwd),
             ]
             if v
         )
         return conn_str
 
-    def __init__(self, server, user, password, driver=None):
+    def __init__(self, server, port, uid, pwd, driver=None):
         self.server = server
-        self.user = user
-        self.password = password
+        self.port = str(port)
+        self.uid = uid
+        self.pwd = pwd
         self.driver = driver
 
     def all_schemas(self, cursor):
@@ -76,13 +99,27 @@ class BaseDialect:
 
     def all_columns(self, cursor, schema, table):
         cursor.execute(self.SQL_GET_COLUMNS.format(schema=schema, table=table))
-        return [(name, bool(is_null), dtype) for name, is_null, dtype in cursor.fetchall()]
+        columns = []
+        for name, is_null, dtype, max_len, bytes_max_size in cursor.fetchall():
+            new_dtype = self.TYPES.get(dtype)
+            supported = True
+            if not new_dtype:
+                supported = False
+            columns.append((name, bool(is_null), new_dtype or dtype, max_len, bytes_max_size, supported))
+        return columns
 
     def get_indexes(self, cursor, schema, table):
         return []
 
 
 class PostgreSQL(BaseDialect):
+    TYPES = {
+        'bigint': BaseDialect.LONG,
+        'boolean': BaseDialect.BOOL,
+        'character': BaseDialect.STRING,
+        'character varying': BaseDialect.STRING,
+        'integer': BaseDialect.INT,
+    }
     logger = logging.getLogger('psql_dialect')
     SUPPORTED_INDEX_TYPE = {
         'btree': Index.BTREE
@@ -90,9 +127,9 @@ class PostgreSQL(BaseDialect):
 
     def get_indexes(self, cursor, schema, table):
         query = (
-            "select"
-            "  indexname"
-            ", indexdef"
+            "select "
+            "  indexname "
+            ", indexdef "
             "from pg_indexes "
             "where "
             "schemaname='{}' and tablename='{}';"
@@ -100,6 +137,7 @@ class PostgreSQL(BaseDialect):
         cursor.execute(query)
         indexes = []
         for name, define, in cursor.fetchall():
+            self.logger.info('Parse index define:\n%s', define)
             parser = IndexParser.build(define)
             try:
                 data = parser.program()
@@ -119,7 +157,7 @@ class PostgreSQL(BaseDialect):
                 ]
             ]
             method = self.SUPPORTED_INDEX_TYPE.get(method.lower())
-            if method:
+            if method is not None:
                 indexes.append(Index(name, new_columns, is_unique, method))
         return indexes
 

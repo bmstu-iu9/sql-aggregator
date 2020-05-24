@@ -5,6 +5,7 @@ from . import token as tk
 
 # noinspection PyTypeChecker
 logger = logging.getLogger('lexer')  # type: _logger.ParserLogger
+logger.display_position()
 
 
 class Position:

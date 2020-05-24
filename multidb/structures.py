@@ -5,8 +5,8 @@ import pypika as pk
 from pypika import dialects as pika_dialects
 
 from . import dialect
-from .exceptions import SemanticException
 from . import mixins as mx
+from .exceptions import SemanticException
 
 
 class DBMS:
@@ -20,12 +20,12 @@ class DBMS:
     }
 
     def __init__(self, name, connect_data):
+        self.connections = {}
         kind_dbms = connect_data.pop('type').lower()
         self.dialect = self.TYPE_TO_DIALECT[kind_dbms](**connect_data)
         self.sql = self.TYPE_TO_PIKA[kind_dbms]
-
+        self.tables = {}
         self.name = name
-        self.connections = {}
 
     def connect(self, db):
         conn = self.connections.get(db)
@@ -45,6 +45,7 @@ class Table:
         self.dbms = dbms
         self.connection = dbms.connect(db)
         self.cursor: pyodbc.Cursor = self.connection.cursor()
+        dbms.tables.setdefault(db, {}).setdefault(schema, {})[table] = self
 
         self.db = db
         self.schema = schema
@@ -74,7 +75,7 @@ class Table:
             raise SemanticException(msg)
         columns = []
         name_to_column = {}
-        for column_name, is_null, dtype in raw_columns:
+        for column_name, is_null, dtype, max_len, max_size, supported in raw_columns:
             found_index = None
             for index in self.indexes:
                 for idx_column in index.columns:
@@ -84,7 +85,7 @@ class Table:
                 else:
                     continue
                 break
-            column = Column(self, column_name, is_null, dtype, found_index)
+            column = Column(self, column_name, is_null, dtype, max_len, max_size, found_index, supported)
             columns.append(column)
             name_to_column[column_name] = column
         return columns, name_to_column
@@ -98,11 +99,21 @@ class Table:
         cursor.fetchall()
 
     def __del__(self):
-        self.cursor.close()
+        try:
+            self.cursor.close()
+        except pyodbc.ProgrammingError:
+            pass
+
+    def full_name(self):
+        return self.dbms.name, self.db, self.schema, self.table
+
+    def __repr__(self):
+        return 'Table({}.{}.{}.{})'.format(*self.full_name())
 
 
 class Column(mx.AsMixin):
-    def __init__(self, table: Table, name: str, is_null: bool, dtype: int, index=None):
+    def __init__(self, table: Table, name: str, is_null: bool, dtype: str,
+                 max_len: int, max_size: int, index=None, supported=True):
         super().__init__()
         self.name = name
         self.is_null = is_null
@@ -111,5 +122,35 @@ class Column(mx.AsMixin):
         self.index = index
         self.table = table
 
-    def copy(self, table):
-        return Column(table, self.name, self.is_null, self.dtype, self.index)
+        self.max_len = max_len
+        self.max_size = max_size  # max_len * 4 for unicode
+
+        self.supported = supported
+
+        self._used = False
+
+    @property
+    def used(self):
+        return self._used
+
+    @used.setter
+    def used(self, value):
+        if not self.supported:
+            self.table.logger.error(
+                'Data type `%s` not supported. For column %s.%s',
+                self.dtype,
+                '.'.join(self.table.full_name()),
+                self.name
+            )
+        self._used = value
+
+    def __repr__(self):
+        return 'Column({}.{}, is_null={}, type={}, size={}, index={}, supported={})'.format(
+            '.'.join(self.table.full_name()),
+            self.name,
+            self.is_null,
+            self.dtype,
+            self.max_size,
+            self.index,
+            self.supported
+        )

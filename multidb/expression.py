@@ -270,7 +270,7 @@ class BooleanExpression(BaseExpression):
     logger = logging.getLogger('boolean_expression')
 
 
-class NotExpression(BooleanExpression):
+class Not(BooleanExpression):
 
     def __init__(self, value: BaseExpression, *args, **kwargs):
         super().__init__(*args, **kwargs)

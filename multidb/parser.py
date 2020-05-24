@@ -16,7 +16,10 @@ from .exceptions import NotSupported, FatalSyntaxException, SyntaxException
 
 # noinspection PyTypeChecker
 logger = logging.getLogger('parser')  # type: _logger.ParserLogger
-tree_logger = logging.getLogger('tree')
+logger.display_position()
+# noinspection PyTypeChecker
+tree_logger = logging.getLogger('tree')  # type: _logger.ParserLogger
+tree_logger.display_position()
 
 
 class CmpLexer(lexer.Lexer):
@@ -127,7 +130,10 @@ class SQLParser(Parser):
 
     def __init__(self, lex: CmpLexer):
         super().__init__(lex)
-        self.data = parse_data.ParseData()
+        self.cc = None
+
+    def set_cc(self, cc):
+        self.cc = cc
 
     def program(self):
         #   <select>
@@ -159,7 +165,7 @@ class SQLParser(Parser):
         select_list = self.select_list()
         kwargs = self.table_expression()
         # Todo
-        return dml.Select(None, select_list=select_list, **kwargs)
+        return dml.Select(self.cc, select_list=select_list, **kwargs)
 
     @utils.log(tree_logger)
     def select_list(self):
@@ -318,7 +324,7 @@ class SQLParser(Parser):
         is_not = True if self.token.optional >> kw.NOT else False
         factor = self.boolean_test()
         if is_not:
-            factor = expr.NotExpression(factor)
+            factor = expr.Not(factor)
         return factor
 
     @utils.log(tree_logger)
@@ -330,7 +336,7 @@ class SQLParser(Parser):
             value = self.truth_value()
             primary = expr.Is(primary, value)
             if is_not:
-                primary = expr.NotExpression(primary)
+                primary = expr.Not(primary)
         return primary
 
     @utils.log(tree_logger)
@@ -630,15 +636,20 @@ class SQLParser(Parser):
     def union_join(self):
         raise NotSupported
 
+    # @utils.log(tree_logger)
+    # def join_specification(self):
+    #     #   <join_condition>
+    #     # | <named_columns_join>
+    #     if self.token == kw.ON:
+    #         data = self.join_condition()
+    #     else:
+    #         data = self.named_columns_join()
+    #     return data
+
     @utils.log(tree_logger)
     def join_specification(self):
-        #   <join_condition>
-        # | <named_columns_join>
-        if self.token == kw.ON:
-            data = self.join_condition()
-        else:
-            data = self.named_columns_join()
-        return data
+        # <join_condition>
+        return self.join_condition()
 
     @utils.log(tree_logger)
     def join_condition(self):
@@ -650,14 +661,14 @@ class SQLParser(Parser):
     def search_condition(self):
         return self.boolean_value_expression()
 
-    @utils.log(tree_logger)
-    def named_columns_join(self):
-        # USING <left_paren> <join_column_list> <right_paren>
-        self.token >> kw.USING
-        self.token >> ss.left_paren
-        data = self.join_column_list()
-        self.token >> ss.right_paren
-        return data
+    # @utils.log(tree_logger)
+    # def named_columns_join(self):
+    #     # USING <left_paren> <join_column_list> <right_paren>
+    #     self.token >> kw.USING
+    #     self.token >> ss.left_paren
+    #     data = self.join_column_list()
+    #     self.token >> ss.right_paren
+    #     return data
 
     @utils.log(tree_logger)
     def join_type(self):
@@ -732,12 +743,12 @@ class IndexParser(Parser):
         if self.token.optional >> kw.IF:
             self.token >> kw.NOT
             self.token >> kw.EXISTS
-            name = self.token >> tk.IdentifierToken
+            _ = self.token >> tk.IdentifierToken  # name
         else:
-            name = self.token.optional >> tk.IdentifierToken
+            _ = self.token.optional >> tk.IdentifierToken  # name
         self.token >> kw.ON
-        is_only = self.token.optional >> kw.ONLY
-        table_name = self.naming_chain()
+        _ = self.token.optional >> kw.ONLY  # is_only
+        _ = self.naming_chain()  # table_name
 
         method = self.token.optional >> kw.USING
         if method:
@@ -768,7 +779,7 @@ class IndexParser(Parser):
         if predicate:
             predicate = self.predicate()
         '''
-        return columns, is_unique, method
+        return columns, bool(is_unique), method
 
     def column_list(self):
         data = [self.token >> tk.IdentifierToken]
