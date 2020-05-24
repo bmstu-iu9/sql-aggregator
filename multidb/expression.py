@@ -1,5 +1,6 @@
 import logging
 from datetime import date, datetime
+from itertools import combinations_with_replacement
 from typing import Union
 
 from . import mixins as mx
@@ -269,6 +270,9 @@ class Div(DoubleNumericExpression):
 class BooleanExpression(BaseExpression):
     logger = logging.getLogger('boolean_expression')
 
+    def calculate(self, vector):
+        raise NotImplementedError
+
 
 class Not(BooleanExpression):
 
@@ -288,6 +292,13 @@ class Not(BooleanExpression):
             return Null()
         return self
 
+    def calculate(self, vector):
+        if isinstance(self.value, BooleanExpression):
+            value = self.value.calculate(vector)
+        else:
+            value = vector.pop()
+        return None if value is None else not value
+
     def __repr__(self):
         return 'not {!r}'.format(self.value)
 
@@ -306,6 +317,21 @@ class DoubleBooleanExpression(BooleanExpression):
     def __repr__(self):
         return '({!r} {} {!r})'.format(self.left, self.op, self.right)
 
+    def calculate(self, vector):
+        raise NotImplementedError
+
+    @staticmethod
+    def _get_value_for_calculate(value, vector):
+        if isinstance(value, BooleanExpression):
+            value = value.calculate(vector)
+        elif isinstance(value, Bool):
+            value = value.value
+        elif isinstance(value, Null):
+            value = None
+        else:
+            value = vector.pop()
+        return value
+
 
 class Or(DoubleBooleanExpression):
     op = DoubleBooleanExpression.OR
@@ -314,6 +340,9 @@ class Or(DoubleBooleanExpression):
     def convolution(self):
         self.left = self.left.convolution.to_bool
         self.right = self.right.convolution.to_bool
+
+        if isinstance(self.left, Bool) and isinstance(self.right, Bool):
+            return Bool(self.left.value or self.right.value)
 
         if (
             isinstance(self.left, Bool) and self.left.value or
@@ -327,10 +356,20 @@ class Or(DoubleBooleanExpression):
         ):
             return Bool(False)
 
-        if isinstance(self.left, Null) or isinstance(self.right, Null):
+        if isinstance(self.left, Null) and isinstance(self.right, Null):
             return Null()
 
         return self
+
+    def calculate(self, vector):
+        left = self._get_value_for_calculate(self.left, vector)
+        right = self._get_value_for_calculate(self.right, vector)
+
+        if left or right:
+            return True
+        elif left is None or right is None:
+            return None
+        return False
 
 
 class And(DoubleBooleanExpression):
@@ -340,6 +379,9 @@ class And(DoubleBooleanExpression):
     def convolution(self):
         self.left = self.left.convolution.to_bool
         self.right = self.right.convolution.to_bool
+
+        if isinstance(self.left, Bool) and isinstance(self.right, Bool):
+            return Bool(self.left.value and self.right.value)
 
         if (
             isinstance(self.left, Bool) and self.left.value and
@@ -353,10 +395,20 @@ class And(DoubleBooleanExpression):
         ):
             return Bool(False)
 
-        if isinstance(self.left, Null) or isinstance(self.right, Null):
+        if isinstance(self.left, Null) and isinstance(self.right, Null):
             return Null()
 
         return self
+
+    def calculate(self, vector):
+        left = self._get_value_for_calculate(self.left, vector)
+        right = self._get_value_for_calculate(self.right, vector)
+
+        if left is False or right is False:
+            return False
+        elif left and right:
+            return True
+        return None
 
 
 class Is(DoubleBooleanExpression):
@@ -372,6 +424,10 @@ class Is(DoubleBooleanExpression):
             value = self.left is None
             return Bool(value)
         return self
+
+    def calculate(self, vector):
+        left = self._get_value_for_calculate(self.left, vector)
+        return left is self.right
 
 
 class BasePredicate(BaseExpression):

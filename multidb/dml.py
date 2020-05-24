@@ -7,10 +7,43 @@ from . import symbols as ss
 from . import utils
 from ._logger import ParserLogger
 from .exceptions import UnreachableException, SemanticException
+from itertools import combinations_with_replacement
 
 
 class Select:
     logger: ParserLogger = logging.getLogger('selection')
+
+    class PDNF:
+        def __init__(self, expression):
+            assert isinstance(expression, expr.BooleanExpression)
+
+            self.raw_expression = expression
+            self.base_expressions = self.get_base_expressions(expression)
+
+            self.true_combination = [
+                vector
+                for vector in combinations_with_replacement(
+                    [False, None, True],
+                    len(self.base_expressions)
+                )
+                for value in [expression.calculate(list(vector))]
+                if value
+            ]
+
+        def get_base_expressions(self, expression):
+            if isinstance(expression, expr.DoubleBooleanExpression):
+                left = self.get_base_expressions(expression.left)
+                right = self.get_base_expressions(expression.right)
+                return left + right
+            elif isinstance(expression, expr.Not):
+                return self.get_base_expressions(expression.value)
+            elif isinstance(expression, (
+                    expr.BasePredicate,
+                    expr.NumericExpression,
+                    st.Column,
+            )):
+                return [expression]
+            return []
 
     def __init__(self, cc, select_list, from_, where=None, group=None, having=None):
         if len(from_) != 1:
@@ -58,7 +91,17 @@ class Select:
             if right_obj:
                 table.right = right_obj
             if isinstance(table, jn.QualifiedJoin):
-                table.specification = self.validate_expression(table.specification.convolution)
+                if not isinstance(table.specification, (
+                        expr.BooleanExpression,
+                        expr.BasePredicate,
+                        expr.Column,
+                )):
+                    self.logger.error('Support join condition only boolean expression or column')
+                else:
+                    table.specification = self.validate_expression(table.specification.convolution)
+                    if isinstance(table.specification, expr.BooleanExpression):
+                        table.specification = self.PDNF(table.specification)
+
             return None, None
 
     def check_table(self, table_naming_chain, only_get=False):
@@ -201,7 +244,7 @@ class Select:
             column.used = True
             return column
 
-        elif isinstance(expression, expr.BooleanExpression):
+        elif isinstance(expression, expr.NumericExpression):
             if isinstance(expression, expr.UnarySign):
                 expression.value = self.validate_expression(expression.value)
             elif isinstance(expression, expr.DoubleNumericExpression):
@@ -209,7 +252,8 @@ class Select:
                 expression.right = self.validate_expression(expression.right)
             else:
                 raise UnreachableException()
-        elif isinstance(expression, expr.NumericExpression):
+
+        elif isinstance(expression, expr.BooleanExpression):
             if isinstance(expression, expr.Not):
                 expression.value = self.validate_expression(expression.value)
             elif isinstance(expression, expr.Is):
@@ -217,12 +261,24 @@ class Select:
             elif isinstance(expression, expr.DoubleBooleanExpression):
                 expression.left = self.validate_expression(expression.left)
                 expression.right = self.validate_expression(expression.right)
-            elif isinstance(expression, expr.ComparisonPredicate):
-                expression.left = self.validate_expression(expression.left)
-                expression.right = self.validate_expression(expression.right)
             else:
                 raise UnreachableException()
+
+        elif isinstance(expression, expr.ComparisonPredicate):
+            expression.left = self.validate_expression(expression.left)
+            expression.right = self.validate_expression(expression.right)
         return expression
 
     def validate_where(self):
-        self.where = self.where and self.validate_expression(self.where.convolution())
+        if not self.where:
+            return
+        if not isinstance(self.where, (
+            expr.BooleanExpression,
+            expr.BasePredicate,
+            expr.Column,
+        )):
+            self.logger.error('Support where condition only boolean expression or column')
+            return
+        self.where = self.where and self.validate_expression(self.where.convolution)
+        if isinstance(self.where, expr.BooleanExpression):
+            self.where = self.PDNF(self.where)
