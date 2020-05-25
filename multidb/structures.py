@@ -78,16 +78,14 @@ class Table:
         columns = []
         name_to_column = {}
         for column_name, is_null, dtype, max_len, max_size, supported in raw_columns:
-            found_index = None
+            found_indexes = []
             for index in self.indexes:
                 for idx_column in index.columns:
                     if column_name == idx_column.name:
-                        found_index = index
+                        found_indexes.append(index)
                         break
-                else:
-                    continue
-                break
-            column = Column(self, column_name, is_null, dtype, max_len, max_size, found_index, supported)
+
+            column = Column(self, column_name, is_null, dtype, max_len, max_size, found_indexes, supported)
             columns.append(column)
             name_to_column[column_name] = column
         return columns, name_to_column
@@ -110,18 +108,18 @@ class Table:
         return self.dbms.name, self.db, self.schema, self.table
 
     def __repr__(self):
-        return 'Table({}.{}.{}.{})'.format(*self.full_name())
+        return 'Table({}.{}.{}.{}, where={})'.format(*self.full_name(), self.filters)
 
 
 class Column(mx.AsMixin):
     def __init__(self, table: Table, name: str, is_null: bool, dtype: str,
-                 max_len: int, max_size: int, index=None, supported=True):
+                 max_len: int, max_size: int, indexes=None, supported=True):
         super().__init__()
         self.name = name
         self.is_null = is_null
         self.dtype = dtype
 
-        self.index = index
+        self.indexes = indexes or []
         self.table = table
 
         self.max_len = max_len
@@ -149,12 +147,23 @@ class Column(mx.AsMixin):
         self._used = value
 
     def __repr__(self):
-        return 'Column({}.{}, is_null={}, type={}, size={}, index={}, supported={})'.format(
+        return (
+            'Column({}.{}'
+            ', is_null={}'
+            ', type={}'
+            ', size={}'
+            ', indexes={}'
+            ', supported={}'
+            ', count_used={}'
+            ', visible={})'
+        ).format(
             '.'.join(self.table.full_name()),
             self.name,
             self.is_null,
             self.dtype,
             self.max_size,
-            self.index,
-            self.supported
+            self.indexes,
+            self.supported,
+            self.count_used,
+            self.visible
         )

@@ -446,6 +446,16 @@ class ComparisonPredicate(BasePredicate):
         for k, v in [(a, b), (b, a)]
     }
 
+    __MAP_REVERSE = [
+        (ss.less_than_operator, ss.greater_than_operator),
+        (ss.less_than_or_equals_operator, ss.greater_than_or_equals_operator)
+    ]
+    MAP_REVERSE = {
+        k: v
+        for a, b in __MAP_REVERSE
+        for k, v in [(a, b), (b, a)]
+    }
+
     def __init__(self, left, right, op, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.left = left
@@ -454,9 +464,33 @@ class ComparisonPredicate(BasePredicate):
 
     @property
     def convolution(self):
-        self.left = self.left.convolution
-        self.right = self.right.convolution
+        if isinstance(self.left, BaseExpression):
+            self.left = self.left.convolution.to_int
+        elif isinstance(self.right, BaseExpression):
+            self.right = self.right.convolution.to_int
+
+        if isinstance(self.left, PrimaryNumeric) and isinstance(self.right, PrimaryNumeric):
+            left = self.left.value
+            right = self.right.value
+            if self.op == ss.equals_operator:
+                return Bool(left == right)
+            elif self.op == ss.not_equals_operator:
+                return Bool(left != right)
+            elif self.op == ss.less_than_operator:
+                return Bool(left < right)
+            elif self.op == ss.less_than_or_equals_operator:
+                return Bool(left <= right)
+            elif self.op == ss.greater_than_operator:
+                return Bool(left > right)
+            elif self.op == ss.greater_than_or_equals_operator:
+                return Bool(left >= right)
+        elif isinstance(self.left, Null) or isinstance(self.right, Null):
+            return Null()
         return self
+
+    def reverse(self):
+        self.left, self.right = self.right, self.left
+        self.op = self.MAP_REVERSE.get(self.op, self.op)
 
     def __repr__(self):
         return '({!r} {} {!r})'.format(self.left, ss.NAME_TO_SYMBOL.get(self.op), self.right)

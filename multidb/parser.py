@@ -615,7 +615,7 @@ class SQLParser(Parser):
         # CROSS JOIN <join_factor>
         self.token >> kw.CROSS
         self.token >> kw.JOIN
-        return jn.CrossJoin(self.join_factor())
+        return jn.CrossJoin(None, self.join_factor())
 
     @utils.log(tree_logger)
     def qualified_join(self):
@@ -626,7 +626,7 @@ class SQLParser(Parser):
         self.token >> kw.JOIN
         right = self.join_factor()
         spec = self.join_specification()
-        return cls(right, spec)
+        return cls(None, right, spec)
 
     @utils.log(tree_logger)
     def natural_join(self):

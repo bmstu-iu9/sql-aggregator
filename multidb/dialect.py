@@ -37,6 +37,7 @@ class BaseDialect:
     LONG = 'long'
     INT = 'int'
     STRING = 'string'
+    FLOAT = 'float'
     TYPES = {}
 
     DBMS_TO_DRIVER = {}
@@ -119,6 +120,7 @@ class PostgreSQL(BaseDialect):
         'character': BaseDialect.STRING,
         'character varying': BaseDialect.STRING,
         'integer': BaseDialect.INT,
+        'double precision': BaseDialect.FLOAT,
     }
     logger = logging.getLogger('psql_dialect')
     SUPPORTED_INDEX_TYPE = {

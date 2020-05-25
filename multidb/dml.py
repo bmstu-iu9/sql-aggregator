@@ -6,7 +6,7 @@ from . import structures as st
 from . import symbols as ss
 from . import utils
 from ._logger import ParserLogger
-from .exceptions import UnreachableException, SemanticException
+from .exceptions import UnreachableException, SemanticException, NotSupported
 from itertools import product
 from functools import reduce
 
@@ -16,7 +16,9 @@ class Select:
 
     class PDNF:
         def __init__(self, expression):
-            assert isinstance(expression, expr.BooleanExpression)
+            # assert isinstance(expression, expr.BooleanExpression)
+            if isinstance(expression, (expr.ComparisonPredicate, expr.NumericExpression)):
+                expression = expr.Is(expression, True).convolution
 
             self.raw_expression = expression
             self.base_expressions = self.get_base_expressions(expression)
@@ -63,7 +65,11 @@ class Select:
             self.not_used_expression = []
 
         def __repr__(self):
-            return 'PDNF({}, basis={})'.format(self.true_combination, self.base_expressions)
+            return 'PDNF({}, not_used={}, basis={})'.format(
+                self.true_combination,
+                self.not_used_expression,
+                self.base_expressions
+            )
 
         def get_base_expressions(self, expression):
             if isinstance(expression, expr.Is):
@@ -84,9 +90,9 @@ class Select:
 
         def __grouping(self, idx):
             _false, _none, _true = reduce(
-                lambda acc, e: acc[e[0]].append(e[1]) or acc
+                lambda acc, e: acc[e[0]].append(e[1]) or acc,
                 (
-                    (i, vector[:i] + vector[i+1:])
+                    (i, vector[:idx] + vector[idx+1:])
                     for vector in self.true_combination
                     for check in [vector[idx]]
                     for i in [
@@ -100,6 +106,32 @@ class Select:
                 [[], [], []]
             )
             return _false, _none, _true
+
+        def _check_expr_one_table(self, i, basis, table):
+            new_expr = None
+            if i in self.all_true:  # e is True
+                new_expr = expr.Is(basis, True)
+            elif i in self.all_false:  # e is False
+                new_expr = expr.Is(basis, False)
+            elif i in self.all_none:  # e is None
+                new_expr = expr.Is(basis, None)
+            else:
+                # Проверка на `is not` or any
+                _false, _none, _true = self.__grouping(i)
+                if _false == _none == _true:  # Any
+                    pass
+                elif _false == _none and not _true:  # e is not True
+                    new_expr = expr.Not(expr.Is(basis, True))
+                elif _false == _true and not _none:  # e is not None
+                    new_expr = expr.Not(expr.Is(basis, None))
+                elif _none == _true and not _false:  # e is not False
+                    new_expr = expr.Not(expr.Is(basis, False))
+                else:
+                    return False
+            if new_expr:
+                table.filters.append(new_expr)
+            self.not_used_expression.append(i)
+            return True
 
         def basis_classifier_for_where(self):
             """
@@ -116,38 +148,109 @@ class Select:
                     column.table
                     for column in all_columns
                 }
-                assert len(left_columns) > 0
+                assert len(all_columns)
                 if len(table) > 1:
                     # Если условие на 2 таблицы и более,
                     # то пропускаем
                     continue
 
                 table = table.pop()
-                new_expr = None
-                if i in self.all_true:  # e is True
-                    new_expr = expr.Is(basis, True)
-                elif i in self.all_false:  # e is False
-                    new_expr = expr.Is(basis, False)
-                elif i in self.all_none:  # e is None
-                    new_expr = expr.Is(basis, None)
-                else:
-                    # Проверка на `is not` or any
-                    _false, _none, _true = self.__grouping(i)
-                    if _false == _none == _true:  # Any
-                        pass
-                    elif _false == _none and not _true:  # e is not True
-                        new_expr = expr.Not(expr.Is(basis, True))
-                    elif _false == _true and not _none:  # e is not None
-                        new_expr = expr.Not(expr.Is(basis, None))
-                    elif _none == _true and not _false:  # e is not False
-                        new_expr = expr.Not(expr.Is(basis, False))
-                    else:
+                flag = self._check_expr_one_table(i, basis, table)
+                if flag:
+                    for column in all_columns:
+                        column.count_used -= 1
+
+        def basis_classifier_inner_join(self, join_left_tables, join_right_tables):
+            """
+            Классифицирует условия для INNER_JOIN
+            """
+            join_left_tables = set(join_left_tables)
+            join_right_tables = set(join_right_tables)
+            join_expr_equals = []
+            for i, (basis, columns) in enumerate(zip(self.base_expressions, self.used_columns)):
+                left_columns, right_columns = columns
+                if isinstance(basis, expr.ComparisonPredicate):
+                    assert left_columns or right_columns
+                    left_table = {
+                        column.table
+                        for column in left_columns
+                    }
+                    right_table = {
+                        column.table
+                        for column in right_columns
+                    }
+                    wrong_tables = (left_table | right_table) - (join_left_tables | join_right_tables)
+                    if wrong_tables:
+                        Select.logger.error(
+                            'The tables (%s) is not included in the join',
+                            ', '.join(sorted(
+                                '.'.join(*table.full_name())
+                                for table in wrong_tables
+                            ))
+                        )
                         continue
-                if new_expr:
-                    table.filters.append(new_expr)
-                self.not_used_expression.append(i)
-                for column in all_columns:
-                    column.count_used -= 1
+
+                    if left_table <= join_right_tables and right_table <= join_left_tables:
+                        # Привод к виду, где левая часть предиката
+                        # соответствует левой таблице, а правая часть
+                        # соответствует правой таблице
+                        basis.reverse()
+                        left_table, right_table = right_table, left_table
+                        left_columns, right_columns = right_columns, left_columns
+
+                    if len(left_table) == 1 and len(right_table) == 1:
+                        left_table = left_table.pop()
+                        right_table = right_table.pop()
+                        if left_table == right_table:  # Условие на одну таблицу
+                            flag = self._check_expr_one_table(i, basis, right_table)
+                            if flag:
+                                for column in left_columns + right_columns:
+                                    column.count_used -= 1
+                        elif (
+                            left_table in join_left_tables and
+                            right_table in join_right_tables and
+                            isinstance(basis.left, st.Column) and
+                            isinstance(basis.right, st.Column)
+                        ):
+                            # left.column = right.column
+                            if i in self.all_true and basis.op == ss.equals_operator:  # (a.id = b.id) is True
+                                join_expr_equals.append((basis.left, basis.right))
+                            elif i in self.all_false and basis.op == ss.not_equals_operator:  # (a.id != b.id) is False
+                                join_expr_equals.append((basis.left, basis.right))
+                            else:
+                                continue
+                            self.not_used_expression.append(i)
+                            for column in left_columns + right_columns:
+                                column.count_used -= 1
+                    elif len(left_table) == 1 and len(right_table) == 0:
+                        # tbl.column <= 10
+                        table = left_table.pop()
+                        flag = self._check_expr_one_table(i, basis, table)
+                        if flag:
+                            for column in left_columns:
+                                column.count_used -= 1
+                    elif len(left_table) == 0 and len(right_table) == 1:
+                        # tbl.column <= 10
+                        table = right_table.pop()
+                        flag = self._check_expr_one_table(i, basis, table)
+                        if flag:
+                            for column in right_columns:
+                                column.count_used -= 1
+                    continue
+                else:
+                    assert len(left_columns)
+                    table = {
+                        column.table
+                        for column in left_columns
+                    }
+                    if len(table) > 1:
+                        continue
+                    table = table.pop()
+                    flag = self._check_expr_one_table(i, basis, table)
+                    if flag:
+                        for column in left_columns:
+                            column.count_used -= 1
+            return join_expr_equals
 
     def __init__(self, cc, select_list, from_, where=None, group=None, having=None):
         if len(from_) != 1:
@@ -171,6 +274,7 @@ class Select:
 
     def validate(self):
         self.validate_from()
+        self.validate_all_join()
         self.validate_select_list()
         self.validate_where()
 
@@ -204,7 +308,7 @@ class Select:
                 else:
                     table.specification = self.validate_expression(table.specification.convolution.to_bool)
                     # TODO: Подумать
-                    if isinstance(table.specification, expr.BooleanExpression):
+                    if True or isinstance(table.specification, expr.BooleanExpression):
                         table.specification = self.PDNF(table.specification)
 
             return None, None
@@ -292,6 +396,36 @@ class Select:
             self.alias_table[str(full_name)] = table_obj
 
         return full_name, table_obj
+
+    def validate_all_join(self):
+        for join in self.from_:
+            self.validate_join(join)
+
+    def validate_join(self, table):
+        if isinstance(table, st.Table):
+            return [table]
+        elif isinstance(table, jn.CrossJoin):
+            return self.validate_join(table.left) + self.validate_join(table.right)
+        elif isinstance(table, jn.InnerJoin):
+            left = self.validate_join(table.left)
+            right = self.validate_join(table.right)
+            table.set_indexed_expression(table.specification.basis_classifier_inner_join(left, right))
+            return left + right
+        elif isinstance(table, jn.LeftJoin):
+            left = self.validate_join(table.left)
+            right = self.validate_join(table.right)
+            # Todo: Обработка Left join
+            return left + right
+        elif isinstance(table, jn.RightJoin):
+            left = self.validate_join(table.left)
+            right = self.validate_join(table.right)
+            # Todo: Обработка Right join
+            return left + right
+        elif isinstance(table, jn.FullJoin):
+            self.logger.error('Full join not supported')
+            return []
+        else:
+            raise UnreachableException
 
     def validate_select_list(self):
         """
@@ -396,8 +530,9 @@ class Select:
             return
         self.where = self.where and self.validate_expression(self.where.convolution.to_bool)
         # TODO: Подумать
-        if isinstance(self.where, expr.BooleanExpression):
+        if True or isinstance(self.where, expr.BooleanExpression):
             self.where = self.PDNF(self.where)
+            self.where.basis_classifier_for_where()
 
     @staticmethod
     def get_used_columns(expression, count_used=False):
