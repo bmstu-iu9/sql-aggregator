@@ -113,6 +113,15 @@ class IdentifierToken(BaseToken):
         return self.raw_value.strip('`')
 
 
+class PSQLIdentifierToken(BaseToken):
+    kind = BaseToken.IDENTIFIER
+    regexp = re.compile(r'[a-zA-Z_][a-zA-Z_0-9]*|"[a-zA-Z_][a-zA-Z_0-9]*"')
+
+    @utils.lazy_property
+    def decode(self):
+        return self.raw_value.strip('"')
+
+
 class KeywordToken(IdentifierToken):
     kind = BaseToken.KEYWORD
 

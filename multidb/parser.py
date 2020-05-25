@@ -733,7 +733,25 @@ class SQLParser(Parser):
         raise NotSupported
 
 
+class PSQLCmpLexer(CmpLexer):
+    TOKENS = [
+        tk.IntToken,
+        tk.FloatToken,
+        tk.StringToken,
+        tk.DateToken,
+        tk.DatetimeToken,
+        tk.PSQLIdentifierToken,
+        tk.KeywordToken,
+        tk.SymbolToken
+    ]
+
+
 class IndexParser(Parser):
+
+    @classmethod
+    def build(cls, program):
+        lex = PSQLCmpLexer(lexer.Position(program))
+        return cls(lex)
 
     def program(self):
         self.token.next()
@@ -743,9 +761,9 @@ class IndexParser(Parser):
         if self.token.optional >> kw.IF:
             self.token >> kw.NOT
             self.token >> kw.EXISTS
-            _ = self.token >> tk.IdentifierToken  # name
+            _ = self.token >> tk.PSQLIdentifierToken  # name
         else:
-            _ = self.token.optional >> tk.IdentifierToken  # name
+            _ = self.token.optional >> tk.PSQLIdentifierToken  # name
         self.token >> kw.ON
         _ = self.token.optional >> kw.ONLY  # is_only
         _ = self.naming_chain()  # table_name
@@ -782,9 +800,9 @@ class IndexParser(Parser):
         return columns, bool(is_unique), method
 
     def column_list(self):
-        data = [self.token >> tk.IdentifierToken]
+        data = [self.token >> tk.PSQLIdentifierToken]
         while self.token.optional >> ss.comma:
-            data.append(self.token >> tk.IdentifierToken)
+            data.append(self.token >> tk.PSQLIdentifierToken)
         return data
 
     def columns(self):
@@ -798,13 +816,13 @@ class IndexParser(Parser):
             column = self.expression()
             self.token >> ss.right_paren
         else:
-            column = self.token >> tk.IdentifierToken
+            column = self.token >> tk.PSQLIdentifierToken
 
         collate = self.token.optional >> kw.COLLATE
         if collate:
-            collate = self.token >> tk.IdentifierToken
+            collate = self.token >> tk.PSQLIdentifierToken
 
-        opclass = self.token.optional >> tk.IdentifierToken
+        opclass = self.token.optional >> tk.PSQLIdentifierToken
         asc_desc = self.token.optional >> (kw.ASC, kw.DESC)
         nulls = self.token.optional >> kw.NULLS
         if nulls:
@@ -814,9 +832,9 @@ class IndexParser(Parser):
 
     def naming_chain(self) -> dt.IdentifierChain:
         # <identifier::ID> [ { <period> <identifier::ID> }... ]
-        chain = utils.NamingChain(self.token >> tk.IdentifierToken)
+        chain = utils.NamingChain(self.token >> tk.PSQLIdentifierToken)
         while self.token.optional >> ss.period:
-            chain.push_last(self.token >> tk.IdentifierToken)
+            chain.push_last(self.token >> tk.PSQLIdentifierToken)
         return chain
 
     def storage_parameters(self):
@@ -826,9 +844,9 @@ class IndexParser(Parser):
         return data
 
     def storage_parameter(self):
-        key = self.token >> tk.IdentifierToken
+        key = self.token >> tk.PSQLIdentifierToken
         self.token >> ss.equals_operator
-        value = self.token >> tk.IdentifierToken
+        value = self.token >> tk.PSQLIdentifierToken
         return key, value
 
     def expression(self):
