@@ -9,7 +9,6 @@ from . import join as jn
 from . import keywords as kw
 from . import lexer
 from . import parse_data
-from . import structures as st
 from . import symbols as ss
 from . import token as tk
 from . import utils
@@ -17,7 +16,10 @@ from .exceptions import NotSupported, FatalSyntaxException, SyntaxException
 
 # noinspection PyTypeChecker
 logger = logging.getLogger('parser')  # type: _logger.ParserLogger
-tree_logger = logging.getLogger('tree')
+logger.display_position()
+# noinspection PyTypeChecker
+tree_logger = logging.getLogger('tree')  # type: _logger.ParserLogger
+tree_logger.display_position()
 
 
 class CmpLexer(lexer.Lexer):
@@ -113,7 +115,9 @@ class Parser:
             )
             raise FatalSyntaxException(msg)
 
-        data, buff, token = max(success, key=lambda x: x[-1].pos.idx)
+        # Выбирается альтернатива с наибольшей длиной
+        # Если таких нексколько, то выбирается с минимальным индексом
+        data, buff, token = max(success, key=lambda x: (x[-1].pos.idx, -x[0][0]))
         self.token = token
 
         logger.append_line_buffer(buff)
@@ -126,7 +130,10 @@ class SQLParser(Parser):
 
     def __init__(self, lex: CmpLexer):
         super().__init__(lex)
-        self.data = parse_data.ParseData()
+        self.cc = None
+
+    def set_cc(self, cc):
+        self.cc = cc
 
     def program(self):
         #   <select>
@@ -147,7 +154,7 @@ class SQLParser(Parser):
 
         elif self.token == kw.DELETE:
             data = self.delete()
-
+        _ = self.token.optional >> ss.semicolon
         self.token >> tk.EndToken
         return data
 
@@ -157,7 +164,8 @@ class SQLParser(Parser):
         self.token >> kw.SELECT
         select_list = self.select_list()
         kwargs = self.table_expression()
-        return dml.Selection(select_list=select_list, **kwargs)
+        # Todo
+        return dml.Select(self.cc, select_list=select_list, **kwargs)
 
     @utils.log(tree_logger)
     def select_list(self):
@@ -175,8 +183,9 @@ class SQLParser(Parser):
     def select_sublist(self):
         #   <qualified_asterisk>
         # | <derived_column>
-        data = self._choice_of_alternatives([self.qualified_asterisk, self.derived_column])
-        return data
+        alt, data = self._choice_of_alternatives([self.qualified_asterisk, self.derived_column])
+        is_qualified_asterisk = alt == 0
+        return is_qualified_asterisk, data
 
     @utils.log(tree_logger)
     def qualified_asterisk(self):
@@ -196,7 +205,7 @@ class SQLParser(Parser):
                 break
             data.append(el)
             self.token >> ss.period
-        return data
+        return utils.NamingChain(*data)
 
     @utils.log(tree_logger)
     def derived_column(self):
@@ -267,12 +276,13 @@ class SQLParser(Parser):
 
     @utils.log(tree_logger)
     def factor(self):
-        # [ <sign> ] <numeric_primary>
-        sign = ss.plus_sign
+        # [ <minus_sign> ] <numeric_primary>
+        sign = self.token.optional >> ss.minus_sign
         if self.token == (ss.plus_sign, ss.minus_sign):
             sign = self.sign()
         primary = self.numeric_primary()
-        primary.set_sign(sign)
+        if sign is not None:
+            primary = expr.UnarySign(primary, sign)
         return primary
 
     @utils.log(tree_logger)
@@ -313,7 +323,8 @@ class SQLParser(Parser):
         # [ NOT ] <boolean_test>
         is_not = True if self.token.optional >> kw.NOT else False
         factor = self.boolean_test()
-        factor.set_not(is_not)
+        if is_not:
+            factor = expr.Not(factor)
         return factor
 
     @utils.log(tree_logger)
@@ -324,7 +335,8 @@ class SQLParser(Parser):
             is_not = True if self.token.optional >> kw.NOT else False
             value = self.truth_value()
             primary = expr.Is(primary, value)
-            primary.set_not(is_not)
+            if is_not:
+                primary = expr.Not(primary)
         return primary
 
     @utils.log(tree_logger)
@@ -456,7 +468,8 @@ class SQLParser(Parser):
         if self.token == (ss.plus_sign, ss.minus_sign):
             sign = self.sign()
         value = self.unsigned_numeric_literal()
-        value.set_sign(sign)
+        if sign is not None:
+            value = expr.UnarySign(value, sign)
         return value
 
     @utils.log(tree_logger)
@@ -507,7 +520,7 @@ class SQLParser(Parser):
     @utils.log(tree_logger)
     def identifier_chain(self) -> dt.IdentifierChain:
         # <identifier::ID> [ { <period> <identifier::ID> }... ]
-        chain = st.NameChain(self.token >> tk.IdentifierToken)
+        chain = utils.NamingChain(self.token >> tk.IdentifierToken)
         while self.token.optional >> ss.period:
             chain.push_last(self.token >> tk.IdentifierToken)
         return chain
@@ -602,7 +615,7 @@ class SQLParser(Parser):
         # CROSS JOIN <join_factor>
         self.token >> kw.CROSS
         self.token >> kw.JOIN
-        return jn.CrossJoin(self.join_factor())
+        return jn.CrossJoin(None, self.join_factor())
 
     @utils.log(tree_logger)
     def qualified_join(self):
@@ -613,7 +626,7 @@ class SQLParser(Parser):
         self.token >> kw.JOIN
         right = self.join_factor()
         spec = self.join_specification()
-        return cls(right, spec)
+        return cls(None, right, spec)
 
     @utils.log(tree_logger)
     def natural_join(self):
@@ -623,15 +636,20 @@ class SQLParser(Parser):
     def union_join(self):
         raise NotSupported
 
+    # @utils.log(tree_logger)
+    # def join_specification(self):
+    #     #   <join_condition>
+    #     # | <named_columns_join>
+    #     if self.token == kw.ON:
+    #         data = self.join_condition()
+    #     else:
+    #         data = self.named_columns_join()
+    #     return data
+
     @utils.log(tree_logger)
     def join_specification(self):
-        #   <join_condition>
-        # | <named_columns_join>
-        if self.token == kw.ON:
-            data = self.join_condition()
-        else:
-            data = self.named_columns_join()
-        return data
+        # <join_condition>
+        return self.join_condition()
 
     @utils.log(tree_logger)
     def join_condition(self):
@@ -643,14 +661,14 @@ class SQLParser(Parser):
     def search_condition(self):
         return self.boolean_value_expression()
 
-    @utils.log(tree_logger)
-    def named_columns_join(self):
-        # USING <left_paren> <join_column_list> <right_paren>
-        self.token >> kw.USING
-        self.token >> ss.left_paren
-        data = self.join_column_list()
-        self.token >> ss.right_paren
-        return data
+    # @utils.log(tree_logger)
+    # def named_columns_join(self):
+    #     # USING <left_paren> <join_column_list> <right_paren>
+    #     self.token >> kw.USING
+    #     self.token >> ss.left_paren
+    #     data = self.join_column_list()
+    #     self.token >> ss.right_paren
+    #     return data
 
     @utils.log(tree_logger)
     def join_type(self):
@@ -713,3 +731,126 @@ class SQLParser(Parser):
     @utils.log(tree_logger)
     def delete(self):
         raise NotSupported
+
+
+class PSQLCmpLexer(CmpLexer):
+    TOKENS = [
+        tk.IntToken,
+        tk.FloatToken,
+        tk.StringToken,
+        tk.DateToken,
+        tk.DatetimeToken,
+        tk.PSQLIdentifierToken,
+        tk.KeywordToken,
+        tk.SymbolToken
+    ]
+
+
+class IndexParser(Parser):
+
+    @classmethod
+    def build(cls, program):
+        lex = PSQLCmpLexer(lexer.Position(program))
+        return cls(lex)
+
+    def program(self):
+        self.token.next()
+        self.token >> kw.CREATE
+        is_unique = self.token.optional >> kw.UNIQUE
+        self.token >> kw.INDEX
+        if self.token.optional >> kw.IF:
+            self.token >> kw.NOT
+            self.token >> kw.EXISTS
+            _ = self.token >> tk.PSQLIdentifierToken  # name
+        else:
+            _ = self.token.optional >> tk.PSQLIdentifierToken  # name
+        self.token >> kw.ON
+        _ = self.token.optional >> kw.ONLY  # is_only
+        _ = self.naming_chain()  # table_name
+
+        method = self.token.optional >> kw.USING
+        if method:
+            method = self.token >> [kw.BTREE, kw.HASH, kw.GIST, kw.SPGIST, kw.GIN, kw.BRIN]
+
+        self.token >> ss.left_paren
+        columns = self.columns()
+        self.token >> ss.right_paren
+
+        '''
+        include = self.token.optional >> kw.INCLUDE
+        if include:
+            self.token >> ss.left_paren
+            include = self.column_list()
+            self.token >> ss.right_paren
+
+        storage_parameters = self.token.optional >> kw.WITH
+        if storage_parameters:
+            self.token >> ss.left_paren
+            storage_parameters = self.storage_parameters()
+            self.token >> ss.right_paren
+
+        table_space = self.token.optional >> kw.TABLESPACE
+        if table_space:
+            table_space = self.token >> tk.IdentifierToken
+
+        predicate = self.token.optional >> kw.WHERE
+        if predicate:
+            predicate = self.predicate()
+        '''
+        return columns, bool(is_unique), method
+
+    def column_list(self):
+        data = [self.token >> tk.PSQLIdentifierToken]
+        while self.token.optional >> ss.comma:
+            data.append(self.token >> tk.PSQLIdentifierToken)
+        return data
+
+    def columns(self):
+        data = [self.column()]
+        while self.token.optional >> ss.comma:
+            data.append(self.column())
+        return data
+
+    def column(self):
+        if self.token.optional >> ss.left_paren:
+            column = self.expression()
+            self.token >> ss.right_paren
+        else:
+            column = self.token >> tk.PSQLIdentifierToken
+
+        collate = self.token.optional >> kw.COLLATE
+        if collate:
+            collate = self.token >> tk.PSQLIdentifierToken
+
+        opclass = self.token.optional >> tk.PSQLIdentifierToken
+        asc_desc = self.token.optional >> (kw.ASC, kw.DESC)
+        nulls = self.token.optional >> kw.NULLS
+        if nulls:
+            nulls = self.token >> [kw.FIRST, kw.LAST]
+
+        return column, collate, opclass, asc_desc, nulls
+
+    def naming_chain(self) -> dt.IdentifierChain:
+        # <identifier::ID> [ { <period> <identifier::ID> }... ]
+        chain = utils.NamingChain(self.token >> tk.PSQLIdentifierToken)
+        while self.token.optional >> ss.period:
+            chain.push_last(self.token >> tk.PSQLIdentifierToken)
+        return chain
+
+    def storage_parameters(self):
+        data = [self.storage_parameter()]
+        if self.token.optional >> ss.comma:
+            data.append(self.storage_parameter())
+        return data
+
+    def storage_parameter(self):
+        key = self.token >> tk.PSQLIdentifierToken
+        self.token >> ss.equals_operator
+        value = self.token >> tk.PSQLIdentifierToken
+        return key, value
+
+    def expression(self):
+        raise NotImplementedError
+
+    def predicate(self):
+        raise NotImplementedError

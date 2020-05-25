@@ -31,12 +31,15 @@ class ParserLogger(logging.Logger):
     log_position = True
     buffer = []
 
+    # -1 not log pos
+    #  0 last token
+    #  1 current token
+    default_mod = 0
+    mode = default_mod
+
     def __init__(self, name, level=logging.NOTSET):
         super().__init__(name, level)
-        self.mode = 0
-        # -1 not log pos
-        #  0 last token
-        #  1 current token
+        self.log_position = False
 
     @classmethod
     def pop_line_buffer(cls, dev=None):
@@ -61,19 +64,22 @@ class ParserLogger(logging.Logger):
     def set_parser(cls, parser):
         cls.parser = parser
 
-    @property
+    def display_position(self):
+        self.log_position = True
+        return self
+
     def do_not_display_pos(self):
         self.log_position = False
         return self
 
     @property
     def current_token(self):
-        self.mode = 1
+        self.__class__.mode = 1
         return self
 
     @property
     def pass_token_info(self):
-        self.mode = -1
+        self.__class__.mode = -1
         return self
 
     def _log(self, level, msg, args, exc_info=None, extra=None, stack_info=False):
@@ -84,8 +90,8 @@ class ParserLogger(logging.Logger):
         if self.log_position and self.mode >= 0 and lexer:
             pos = lexer.interval if self.mode else lexer.last_interval
             msg = '{!r} {}'.format(pos, msg)
-        self.mode = 0
-        self.log_position = True
+        self.__class__.mode = self.default_mod
+
         if self.__class__.buffer:
             self.__class__.buffer[-1].append((self, level, msg, args, exc_info, extra, stack_info))
         else:

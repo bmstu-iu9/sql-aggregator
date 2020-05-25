@@ -1,5 +1,6 @@
 import logging
 from functools import wraps
+from . import mixins
 
 
 # noinspection PyPep8Naming
@@ -38,3 +39,34 @@ class log:
             return out
 
         return new_func
+
+
+class NamingChain(mixins.AsMixin):
+    def __init__(self, *args):
+        super().__init__()
+        self.chain = list(args)
+
+    @staticmethod
+    def __map_other(other):
+        return (
+            other.chain
+            if isinstance(other, NamingChain) else
+            list(other)
+            if isinstance(other, (list, tuple)) else
+            [other]
+        )
+
+    def push_first(self, other):
+        self.chain = self.__map_other(other) + self.chain
+
+    def push_last(self, other):
+        self.chain = self.chain + self.__map_other(other)
+
+    def get_data(self):
+        return tuple(self.chain)
+
+    def __repr__(self):
+        return '{}({})'.format(self.__class__.__name__, self)
+
+    def __str__(self):
+        return '.'.join(self.chain)
