@@ -67,6 +67,8 @@ class Table:
 
         self.use_columns = {}
 
+        self.filters = []
+
     def __get_columns(self):
         raw_columns = self.dbms.dialect.all_columns(self.cursor, self.schema, self.table)
         if not raw_columns:
@@ -128,6 +130,8 @@ class Column(mx.AsMixin):
         self.supported = supported
 
         self._used = False
+        self.visible = False
+        self.count_used = 0
 
     @property
     def used(self):

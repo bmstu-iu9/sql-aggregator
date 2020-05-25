@@ -7,7 +7,8 @@ from . import symbols as ss
 from . import utils
 from ._logger import ParserLogger
 from .exceptions import UnreachableException, SemanticException
-from itertools import combinations_with_replacement
+from itertools import product
+from functools import reduce
 
 
 class Select:
@@ -22,28 +23,131 @@ class Select:
 
             self.true_combination = [
                 vector
-                for vector in combinations_with_replacement(
+                for vector in product(
                     [False, None, True],
-                    len(self.base_expressions)
+                    repeat=len(self.base_expressions)
                 )
                 for value in [expression.calculate(list(vector))]
                 if value
             ]
 
+            self.all_false, self.all_none, self.all_true = reduce(
+                lambda acc, e: acc[e[0]].append(e[1]) or acc,
+                (
+                    (idx, n)
+                    for n, arr in enumerate(zip(*self.true_combination))
+                    for idx in [
+                        0
+                        if all(x is False for x in arr) else
+                        1
+                        if all(x is None for x in arr) else
+                        2
+                        if all(x is True for x in arr) else
+                        None
+                    ]
+                    if idx is not None
+                ),
+                [[], [], []]
+            )
+
+            self.used_columns = [
+                val
+                for b in self.base_expressions
+                for val in [
+                    (Select.get_used_columns(b.left, True), Select.get_used_columns(b.right, True))
+                    if isinstance(b, expr.ComparisonPredicate) else
+                    (Select.get_used_columns(b, True), None)
+                ]
+            ]
+
+            self.not_used_expression = []
+
+        def __repr__(self):
+            return 'PDNF({}, basis={})'.format(self.true_combination, self.base_expressions)
+
         def get_base_expressions(self, expression):
-            if isinstance(expression, expr.DoubleBooleanExpression):
+            if isinstance(expression, expr.Is):
+                return self.get_base_expressions(expression.left)
+            elif isinstance(expression, expr.DoubleBooleanExpression):
                 left = self.get_base_expressions(expression.left)
                 right = self.get_base_expressions(expression.right)
                 return left + right
             elif isinstance(expression, expr.Not):
                 return self.get_base_expressions(expression.value)
             elif isinstance(expression, (
-                    expr.BasePredicate,
-                    expr.NumericExpression,
-                    st.Column,
+                expr.ComparisonPredicate,
+                expr.NumericExpression,
+                st.Column,
             )):
                 return [expression]
             return []
+
+        def __grouping(self, idx):
+            _false, _none, _true = reduce(
+                lambda acc, e: acc[e[0]].append(e[1]) or acc
+                (
+                    (i, vector[:i] + vector[i+1:])
+                    for vector in self.true_combination
+                    for check in [vector[idx]]
+                    for i in [
+                        0
+                        if check is False else
+                        1
+                        if check is None else
+                        2
+                    ]
+                ),
+                [[], [], []]
+            )
+            return _false, _none, _true
+
+        def basis_classifier_for_where(self):
+            """
+            Классифицирует условия для условия WHERE,
+            так если базисное условие всегда принимает одно значение
+            и при этом использует колонки из одной таблицы,
+            то это условие можно вынести сразу в запрос данных
+            """
+            for i, (basis, columns) in enumerate(zip(self.base_expressions, self.used_columns)):
+                left_columns, right_columns = columns
+                right_columns = right_columns or []
+                all_columns = left_columns + right_columns
+                table = {
+                    column.table
+                    for column in all_columns
+                }
+                assert len(left_columns) > 0
+                if len(table) > 1:
+                    # Если условие на 2 таблицы и более,
+                    # то пропускаем
+                    continue
+
+                table = table.pop()
+                new_expr = None
+                if i in self.all_true:  # e is True
+                    new_expr = expr.Is(basis, True)
+                elif i in self.all_false:  # e is False
+                    new_expr = expr.Is(basis, False)
+                elif i in self.all_none:  # e is None
+                    new_expr = expr.Is(basis, None)
+                else:
+                    # Проверка на `is not` or any
+                    _false, _none, _true = self.__grouping(i)
+                    if _false == _none == _true:  # Any
+                        pass
+                    elif _false == _none and not _true:  # e is not True
+                        new_expr = expr.Not(expr.Is(basis, True))
+                    elif _false == _true and not _none:  # e is not None
+                        new_expr = expr.Not(expr.Is(basis, None))
+                    elif _none == _true and not _false:  # e is not False
+                        new_expr = expr.Not(expr.Is(basis, False))
+                    else:
+                        continue
+                if new_expr:
+                    table.filters.append(new_expr)
+                self.not_used_expression.append(i)
+                for column in all_columns:
+                    column.count_used -= 1
 
     def __init__(self, cc, select_list, from_, where=None, group=None, having=None):
         if len(from_) != 1:
@@ -98,7 +202,8 @@ class Select:
                 )):
                     self.logger.error('Support join condition only boolean expression or column')
                 else:
-                    table.specification = self.validate_expression(table.specification.convolution)
+                    table.specification = self.validate_expression(table.specification.convolution.to_bool)
+                    # TODO: Подумать
                     if isinstance(table.specification, expr.BooleanExpression):
                         table.specification = self.PDNF(table.specification)
 
@@ -203,6 +308,7 @@ class Select:
                 for tbl in level:
                     for column in tbl.columns:
                         column.used = True
+                        column.visible = True
                     select_list.extend(tbl.columns)
         else:
             for is_qualified_asterisk, selection in self.select_list:
@@ -213,24 +319,31 @@ class Select:
                     _, tbl = check
                     for column in tbl.columns:
                         column.used = True
+                        column.visible = True
                     select_list.extend(tbl.columns)
                 else:  # expression
                     short_name = selection.short_name
                     repr_name = repr(selection)
-                    e = self.validate_expression(selection.convolution)
+                    e = self.validate_expression(selection.convolution, True)
                     if short_name:
                         self.alias_selection[short_name] = e
                     e.as_(short_name or repr_name)
                     select_list.append(e)
         self.select_list = select_list
 
-    def validate_expression(self, expression):
+    def validate_expression(self, expression, visible=False):
         """
         Грязная функция - меняет состояния уже существующих объектов
         """
         if isinstance(expression, expr.Column):
             name = expression.value
             tuple_name = name.get_data()
+            if len(tuple_name) == 1:
+                alias_expression = self.alias_selection.get(tuple_name[0])
+                if alias_expression is None:
+                    self.logger.error('Column alias %s not found', tuple_name[0])
+                    return
+                return alias_expression
             assert 2 <= len(tuple_name) <= 5
             *table_name, column_name = tuple_name
             full_table_name, table_obj = self.check_table(utils.NamingChain(*table_name), True)
@@ -242,31 +355,33 @@ class Select:
                 self.logger.error('Column %s not found', name)
                 return expression
             column.used = True
+            if visible:
+                column.visible = True
             return column
 
         elif isinstance(expression, expr.NumericExpression):
             if isinstance(expression, expr.UnarySign):
-                expression.value = self.validate_expression(expression.value)
+                expression.value = self.validate_expression(expression.value, visible)
             elif isinstance(expression, expr.DoubleNumericExpression):
-                expression.left = self.validate_expression(expression.left)
-                expression.right = self.validate_expression(expression.right)
+                expression.left = self.validate_expression(expression.left, visible)
+                expression.right = self.validate_expression(expression.right, visible)
             else:
                 raise UnreachableException()
 
         elif isinstance(expression, expr.BooleanExpression):
             if isinstance(expression, expr.Not):
-                expression.value = self.validate_expression(expression.value)
+                expression.value = self.validate_expression(expression.value, visible)
             elif isinstance(expression, expr.Is):
-                expression.left = self.validate_expression(expression.left)
+                expression.left = self.validate_expression(expression.left, visible)
             elif isinstance(expression, expr.DoubleBooleanExpression):
-                expression.left = self.validate_expression(expression.left)
-                expression.right = self.validate_expression(expression.right)
+                expression.left = self.validate_expression(expression.left, visible)
+                expression.right = self.validate_expression(expression.right, visible)
             else:
                 raise UnreachableException()
 
         elif isinstance(expression, expr.ComparisonPredicate):
-            expression.left = self.validate_expression(expression.left)
-            expression.right = self.validate_expression(expression.right)
+            expression.left = self.validate_expression(expression.left, visible)
+            expression.right = self.validate_expression(expression.right, visible)
         return expression
 
     def validate_where(self):
@@ -279,6 +394,29 @@ class Select:
         )):
             self.logger.error('Support where condition only boolean expression or column')
             return
-        self.where = self.where and self.validate_expression(self.where.convolution)
+        self.where = self.where and self.validate_expression(self.where.convolution.to_bool)
+        # TODO: Подумать
         if isinstance(self.where, expr.BooleanExpression):
             self.where = self.PDNF(self.where)
+
+    @staticmethod
+    def get_used_columns(expression, count_used=False):
+        if isinstance(expression, st.Column):
+            if count_used:
+                expression.count_used += 1
+            return [expression]
+        elif isinstance(expression, expr.Is):
+            return Select.get_used_columns(expression.left, count_used)
+        elif isinstance(expression, (
+            expr.DoubleBooleanExpression,
+            expr.DoubleNumericExpression,
+        )):
+            left = Select.get_used_columns(expression.left, count_used)
+            right = Select.get_used_columns(expression.right, count_used)
+            return left + right
+        elif isinstance(expression, (
+            expr.Not,
+            expr.UnarySign,
+        )):
+            return Select.get_used_columns(expression.value, count_used)
+        return []
