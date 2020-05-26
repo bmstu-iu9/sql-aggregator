@@ -107,6 +107,16 @@ class Table:
     def full_name(self):
         return self.dbms.name, self.db, self.schema, self.table
 
+    def select_query(self):
+        q = self._table.select(*[
+            column.pika()
+            for column in self.columns
+            if column.used and (column.visible or column.count_used > 0)
+        ])
+        for f in self.filters:
+            q = q.where(f.pika())
+        return q
+
     def __repr__(self):
         return 'Table({}.{}.{}.{}, where={})'.format(*self.full_name(), self.filters)
 
@@ -130,6 +140,9 @@ class Column(mx.AsMixin):
         self._used = False
         self.visible = False
         self.count_used = 0
+
+    def pika(self):
+        return pk.Field(self.name)
 
     @property
     def used(self):

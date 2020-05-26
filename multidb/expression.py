@@ -1,11 +1,13 @@
 import logging
 from datetime import date, datetime
-from itertools import combinations_with_replacement
 from typing import Union
+
+import pypika as pk
 
 from . import mixins as mx
 from . import symbols as ss
 from . import utils
+from .exceptions import UnreachableException
 
 
 class BaseExpression(mx.AsMixin):
@@ -20,6 +22,9 @@ class BaseExpression(mx.AsMixin):
     @property
     def to_bool(self):
         return self
+
+    def pika(self):
+        raise NotImplementedError()
 
 
 class PrimaryValue(BaseExpression):
@@ -57,6 +62,9 @@ class PrimaryValue(BaseExpression):
     def __init__(self, value, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.value = value
+
+    def pika(self):
+        return self.value
 
     def __repr__(self):
         return '{}({})'.format(self.__class__.__name__, self.value)
@@ -109,6 +117,9 @@ class Null(PrimaryValue):
 class Column(PrimaryValue):
     KIND = PrimaryValue.COLUMN
 
+    def pika(self):
+        return pk.Field(self.value.get_data()[-1])
+
 
 class SimpleExpression(BaseExpression):
     logger = logging.getLogger('simple_expression')
@@ -117,9 +128,15 @@ class SimpleExpression(BaseExpression):
         super().__init__(*args, **kwargs)
         self.expr = expr
 
+    def pika(self):
+        return self.expr.pika()
+
 
 class NumericExpression(BaseExpression):
     logger = logging.getLogger('numeric_expression')
+
+    def pika(self):
+        raise NotImplementedError()
 
 
 class UnarySign(NumericExpression):
@@ -142,6 +159,10 @@ class UnarySign(NumericExpression):
             sign = ss.minus_sign if check else ss.plus_sign
             return UnarySign(self.value.value, sign)
         return self
+
+    def pika(self):
+        value = self.value.pika()
+        return value if self.sign == 1 else -value
 
     def __repr__(self):
         return '{}CastToInt({!r})'.format('-' if self.is_minus else '', self.value)
@@ -183,6 +204,9 @@ class DoubleNumericExpression(NumericExpression):
 
         return self.special_rules()
 
+    def pika(self):
+        raise NotImplementedError()
+
     def __repr__(self):
         return '({!r} {} {!r})'.format(self.left, self.op, self.right)
 
@@ -200,6 +224,9 @@ class Add(DoubleNumericExpression):
             return self.left
         return self
 
+    def pika(self):
+        return self.left.pika() + self.right.pika()
+
 
 class Sub(DoubleNumericExpression):
     op = DoubleNumericExpression.SUB
@@ -213,6 +240,9 @@ class Sub(DoubleNumericExpression):
         if isinstance(self.right, PrimaryNumeric) and self.right.value == 0:
             return self.left
         return self
+
+    def pika(self):
+        return self.left.pika() - self.right.pika()
 
 
 class Mul(DoubleNumericExpression):
@@ -228,6 +258,9 @@ class Mul(DoubleNumericExpression):
         ):
             return Int(0)
         return self
+
+    def pika(self):
+        return self.left.pika() * self.right.pika()
 
 
 class Div(DoubleNumericExpression):
@@ -266,12 +299,18 @@ class Div(DoubleNumericExpression):
 
         return self.special_rules()
 
+    def pika(self):
+        return self.left.pika() / self.right.pika()
+
 
 class BooleanExpression(BaseExpression):
     logger = logging.getLogger('boolean_expression')
 
     def calculate(self, vector):
         raise NotImplementedError
+
+    def pika(self):
+        raise NotImplementedError()
 
 
 class Not(BooleanExpression):
@@ -299,6 +338,9 @@ class Not(BooleanExpression):
             value = vector.pop()
         return None if value is None else not value
 
+    def pika(self):
+        return not self.value.pika()
+
     def __repr__(self):
         return 'not {!r}'.format(self.value)
 
@@ -318,7 +360,7 @@ class DoubleBooleanExpression(BooleanExpression):
         return '({!r} {} {!r})'.format(self.left, self.op, self.right)
 
     def calculate(self, vector):
-        raise NotImplementedError
+        raise NotImplementedError()
 
     @staticmethod
     def _get_value_for_calculate(value, vector):
@@ -331,6 +373,9 @@ class DoubleBooleanExpression(BooleanExpression):
         else:
             value = vector.pop()
         return value
+
+    def pika(self):
+        raise NotImplementedError()
 
 
 class Or(DoubleBooleanExpression):
@@ -371,6 +416,9 @@ class Or(DoubleBooleanExpression):
             return None
         return False
 
+    def pika(self):
+        return self.left.pika() | self.right.pika()
+
 
 class And(DoubleBooleanExpression):
     op = DoubleBooleanExpression.AND
@@ -410,6 +458,9 @@ class And(DoubleBooleanExpression):
             return True
         return None
 
+    def pika(self):
+        return self.left.pika() & self.right.pika()
+
 
 class Is(DoubleBooleanExpression):
     op = DoubleBooleanExpression.IS
@@ -429,9 +480,19 @@ class Is(DoubleBooleanExpression):
         left = self._get_value_for_calculate(self.left, vector)
         return left is self.right
 
+    def pika(self):
+        if self.right is True:
+            return self.left.pika().istrue()
+        elif self.right is False:
+            return self.left.pika().isfalse()
+        elif self.right is None:
+            return self.left.pika().isnull()
+        raise UnreachableException()
+
 
 class BasePredicate(BaseExpression):
-    pass
+    def pika(self):
+        raise NotImplementedError()
 
 
 class ComparisonPredicate(BasePredicate):
@@ -491,6 +552,24 @@ class ComparisonPredicate(BasePredicate):
     def reverse(self):
         self.left, self.right = self.right, self.left
         self.op = self.MAP_REVERSE.get(self.op, self.op)
+
+    def pika(self):
+        left = self.left.pika()
+        right = self.right.pika()
+
+        if self.op == ss.equals_operator:
+            return left == right
+        elif self.op == ss.not_equals_operator:
+            return left != right
+        elif self.op == ss.less_than_operator:
+            return left < right
+        elif self.op == ss.less_than_or_equals_operator:
+            return left <= right
+        elif self.op == ss.greater_than_operator:
+            return left > right
+        elif self.op == ss.greater_than_or_equals_operator:
+            return left >= right
+        raise UnreachableException()
 
     def __repr__(self):
         return '({!r} {} {!r})'.format(self.left, ss.NAME_TO_SYMBOL.get(self.op), self.right)

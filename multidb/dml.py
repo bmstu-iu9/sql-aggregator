@@ -140,6 +140,18 @@ class Select:
             и при этом использует колонки из одной таблицы,
             то это условие можно вынести сразу в запрос данных
             """
+            raw_used_columns = Select.get_used_columns(self.raw_expression)
+            raw_used_tables = {
+                column.table
+                for column in raw_used_columns
+            }
+            if len(raw_used_tables) == 1:
+                self.not_used_expression = list(range(len(self.base_expressions)))
+                table = raw_used_tables.pop()
+                table.filters.append(self.raw_expression)
+                for column in raw_used_columns:
+                    column.count_used -= 1
+                return
             for i, (basis, columns) in enumerate(zip(self.base_expressions, self.used_columns)):
                 left_columns, right_columns = columns
                 right_columns = right_columns or []
@@ -220,8 +232,6 @@ class Select:
                             else:
                                 continue
                             self.not_used_expression.append(i)
-                            for column in left_columns + right_columns:
-                                column.count_used -= 1
                     elif len(left_table) == 1 and len(right_table) == 0:
                         # tbl.column <= 10
                         table = left_table.pop()
@@ -554,4 +564,8 @@ class Select:
             expr.UnarySign,
         )):
             return Select.get_used_columns(expression.value, count_used)
+        elif isinstance(expression, expr.ComparisonPredicate):
+            left = Select.get_used_columns(expression.left, count_used)
+            right = Select.get_used_columns(expression.right, count_used)
+            return left + right
         return []
