@@ -7,6 +7,7 @@ from pypika import dialects as pika_dialects
 from . import dialect
 from . import mixins as mx
 from .exceptions import SemanticException
+from . import utils
 
 
 class DBMS:
@@ -65,9 +66,8 @@ class Table:
             self.logger.error(msg)
             raise SemanticException(msg)
 
-        self.use_columns = {}
-
         self.filters = []
+        self.bias = 0
 
     def __get_columns(self):
         raw_columns = self.dbms.dialect.all_columns(self.cursor, self.schema, self.table)
@@ -98,6 +98,22 @@ class Table:
         cursor.execute(query.get_sql())
         cursor.fetchall()
 
+    @utils.lazy_property
+    def selected_columns(self):
+        columns = [
+            column
+            for column in self.columns
+            if column.used and (column.visible or column.count_used > 0)
+        ]
+        for i, column in enumerate(columns):
+            column.idx = i
+        return columns
+
+    def set_bias(self, bias):
+        for column in self.selected_columns:
+            column.idx += bias - self.bias
+        self.bias = bias
+
     def __del__(self):
         try:
             self.cursor.close()
@@ -110,12 +126,15 @@ class Table:
     def select_query(self):
         q = self._table.select(*[
             column.pika()
-            for column in self.columns
-            if column.used and (column.visible or column.count_used > 0)
+            for column in self.selected_columns
         ])
         for f in self.filters:
             q = q.where(f.pika())
         return q
+
+    @utils.lazy_property
+    def size(self):
+        return len(self.selected_columns)
 
     def __repr__(self):
         return 'Table({}.{}.{}.{}, where={})'.format(*self.full_name(), self.filters)
@@ -140,6 +159,8 @@ class Column(mx.AsMixin):
         self._used = False
         self.visible = False
         self.count_used = 0
+
+        self.idx = None
 
     def pika(self):
         return pk.Field(self.name)
@@ -180,3 +201,6 @@ class Column(mx.AsMixin):
             self.count_used,
             self.visible
         )
+
+    def express(self, row):
+        return row[self.idx]

@@ -13,17 +13,35 @@ from .exceptions import UnreachableException
 class BaseExpression(mx.AsMixin):
     @property
     def convolution(self):
+        """
+        Свертка - упрощение выражения
+        """
         return self
 
     @property
     def to_int(self):
+        """
+        Приведение к числу
+        """
         return self
 
     @property
     def to_bool(self):
+        """
+        Приведение к True/False
+        """
         return self
 
     def pika(self):
+        """
+        Для генерации SELECT
+        """
+        raise NotImplementedError()
+
+    def express(self, row):
+        """
+        Вычисление выражения
+        """
         raise NotImplementedError()
 
 
@@ -64,6 +82,9 @@ class PrimaryValue(BaseExpression):
         self.value = value
 
     def pika(self):
+        return self.value
+
+    def express(self, row):
         return self.value
 
     def __repr__(self):
@@ -115,6 +136,10 @@ class Null(PrimaryValue):
 
 
 class Column(PrimaryValue):
+    """
+    Используется как заглушка на момент парсинга
+    Потом заменяется на объект Column из structures
+    """
     KIND = PrimaryValue.COLUMN
 
     def pika(self):
@@ -131,11 +156,17 @@ class SimpleExpression(BaseExpression):
     def pika(self):
         return self.expr.pika()
 
+    def express(self, row):
+        return self.expr.express(row)
+
 
 class NumericExpression(BaseExpression):
     logger = logging.getLogger('numeric_expression')
 
     def pika(self):
+        raise NotImplementedError()
+
+    def express(self, row):
         raise NotImplementedError()
 
 
@@ -163,6 +194,13 @@ class UnarySign(NumericExpression):
     def pika(self):
         value = self.value.pika()
         return value if self.sign == 1 else -value
+
+    def express(self, row):
+        value = self.value.express(row)
+        if value is None:
+            return None
+        else:
+            return int(value) * self.sign
 
     def __repr__(self):
         return '{}CastToInt({!r})'.format('-' if self.is_minus else '', self.value)
@@ -206,6 +244,13 @@ class DoubleNumericExpression(NumericExpression):
 
     def pika(self):
         raise NotImplementedError()
+
+    def express(self, row):
+        left = self.left.express(row)
+        right = self.right.express(row)
+        if left is None or right is None:
+            return None
+        return self.action(int(left), int(right))
 
     def __repr__(self):
         return '({!r} {} {!r})'.format(self.left, self.op, self.right)
@@ -299,6 +344,13 @@ class Div(DoubleNumericExpression):
 
         return self.special_rules()
 
+    def express(self, row):
+        left = self.left.express(row)
+        right = self.right.express(row)
+        if left is None or right is None or right == 0:
+            return None
+        return self.action(int(left), int(right))
+
     def pika(self):
         return self.left.pika() / self.right.pika()
 
@@ -307,9 +359,12 @@ class BooleanExpression(BaseExpression):
     logger = logging.getLogger('boolean_expression')
 
     def calculate(self, vector):
-        raise NotImplementedError
+        raise NotImplementedError()
 
     def pika(self):
+        raise NotImplementedError()
+
+    def express(self, row):
         raise NotImplementedError()
 
 
@@ -340,6 +395,12 @@ class Not(BooleanExpression):
 
     def pika(self):
         return not self.value.pika()
+
+    def express(self, row):
+        value = self.value.express(row)
+        if value is None:
+            return None
+        return not bool(value)
 
     def __repr__(self):
         return 'not {!r}'.format(self.value)
@@ -375,6 +436,9 @@ class DoubleBooleanExpression(BooleanExpression):
         return value
 
     def pika(self):
+        raise NotImplementedError()
+
+    def express(self, row):
         raise NotImplementedError()
 
 
@@ -415,6 +479,9 @@ class Or(DoubleBooleanExpression):
         elif left is None or right is None:
             return None
         return False
+
+    def express(self, row):
+        return self.left.express(row) or self.right.express(row)
 
     def pika(self):
         return self.left.pika() | self.right.pika()
@@ -458,6 +525,9 @@ class And(DoubleBooleanExpression):
             return True
         return None
 
+    def express(self, row):
+        return self.left.express(row) and self.right.express(row)
+
     def pika(self):
         return self.left.pika() & self.right.pika()
 
@@ -489,9 +559,18 @@ class Is(DoubleBooleanExpression):
             return self.left.pika().isnull()
         raise UnreachableException()
 
+    def express(self, row):
+        value = self.left.express(row)
+        if value is None:
+            return value is self.right
+        return bool(value) is self.right
+
 
 class BasePredicate(BaseExpression):
     def pika(self):
+        raise NotImplementedError()
+
+    def express(self, row):
         raise NotImplementedError()
 
 
@@ -517,11 +596,21 @@ class ComparisonPredicate(BasePredicate):
         for k, v in [(a, b), (b, a)]
     }
 
+    MAP_ACTION = {
+        ss.equals_operator: lambda a, b: a == b,
+        ss.not_equals_operator: lambda a, b: a != b,
+        ss.less_than_operator: lambda a, b: a < b,
+        ss.less_than_or_equals_operator: lambda a, b: a <= b,
+        ss.greater_than_operator: lambda a, b: a > b,
+        ss.greater_than_or_equals_operator: lambda a, b: a >= b,
+    }
+
     def __init__(self, left, right, op, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.left = left
         self.right = right
         self.op = op
+        self.action = self.MAP_ACTION[self.op]
 
     @property
     def convolution(self):
@@ -533,18 +622,7 @@ class ComparisonPredicate(BasePredicate):
         if isinstance(self.left, PrimaryNumeric) and isinstance(self.right, PrimaryNumeric):
             left = self.left.value
             right = self.right.value
-            if self.op == ss.equals_operator:
-                return Bool(left == right)
-            elif self.op == ss.not_equals_operator:
-                return Bool(left != right)
-            elif self.op == ss.less_than_operator:
-                return Bool(left < right)
-            elif self.op == ss.less_than_or_equals_operator:
-                return Bool(left <= right)
-            elif self.op == ss.greater_than_operator:
-                return Bool(left > right)
-            elif self.op == ss.greater_than_or_equals_operator:
-                return Bool(left >= right)
+            return Bool(self.action(left, right))
         elif isinstance(self.left, Null) or isinstance(self.right, Null):
             return Null()
         return self
@@ -556,20 +634,14 @@ class ComparisonPredicate(BasePredicate):
     def pika(self):
         left = self.left.pika()
         right = self.right.pika()
+        return self.action(left, right)
 
-        if self.op == ss.equals_operator:
-            return left == right
-        elif self.op == ss.not_equals_operator:
-            return left != right
-        elif self.op == ss.less_than_operator:
-            return left < right
-        elif self.op == ss.less_than_or_equals_operator:
-            return left <= right
-        elif self.op == ss.greater_than_operator:
-            return left > right
-        elif self.op == ss.greater_than_or_equals_operator:
-            return left >= right
-        raise UnreachableException()
+    def express(self, row):
+        left = self.left.express(row)
+        right = self.right.express(row)
+        if left is None or right is None:
+            return None
+        return self.action(int(left), int(right))
 
     def __repr__(self):
         return '({!r} {} {!r})'.format(self.left, ss.NAME_TO_SYMBOL.get(self.op), self.right)
@@ -577,9 +649,17 @@ class ComparisonPredicate(BasePredicate):
 
 class StringExpression(BaseExpression):
     # Todo: Does not work
-    pass
+    def pika(self):
+        raise NotImplementedError()
+
+    def express(self, row):
+        raise NotImplementedError()
 
 
 class DatetimeExpression(BaseExpression):
     # Todo: Does not work
-    pass
+    def pika(self):
+        raise NotImplementedError()
+
+    def express(self, row):
+        raise NotImplementedError()

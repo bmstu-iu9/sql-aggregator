@@ -262,6 +262,9 @@ class Select:
                             column.count_used -= 1
             return join_expr_equals
 
+        def calculate(self, row):
+            pass
+
     def __init__(self, cc, select_list, from_, where=None, group=None, having=None):
         if len(from_) != 1:
             self.logger.error('Support only one one table or join')
