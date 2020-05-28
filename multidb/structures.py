@@ -55,8 +55,9 @@ class Table:
         self.table = table
 
         self._db = pk.Database(db)
-        self._schema = pk.Schema(schema, self._db)
-        self._table = pk.Table(table, self._schema)
+        self._schema = pk.Schema(schema)
+        self._table = pk.Table(table, self._schema, query_cls=self.dbms.sql)
+
         self.sqlite_table = pk.Table('{}_{}'.format(table, Table.count))
 
         self.indexes = self.dbms.dialect.get_indexes(self.cursor, schema, table)
@@ -125,6 +126,7 @@ class Table:
     def full_name(self):
         return self.dbms.name, self.db, self.schema, self.table
 
+    @utils.lazy_property
     def select_query(self):
         q = self._table.select(*[
             column.pika()
@@ -134,12 +136,20 @@ class Table:
             q = q.where(f.pika())
         return q
 
+    @utils.lazy_property
     def create_query(self):
         columns = pk.Columns(*[
             (column.name, column.type)
             for column in self.selected_columns
         ])
         return pk.SQLLiteQuery.create_table(self.sqlite_table).columns(*columns)
+
+    @utils.lazy_property
+    def insert_query(self):
+        return 'INSERT INTO {} VALUES ({})'.format(
+            self.sqlite_table.get_sql(),
+            ', '.join(['?'] * len(self.selected_columns))
+        )
 
     @utils.lazy_property
     def size(self):

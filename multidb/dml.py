@@ -7,7 +7,7 @@ from . import symbols as ss
 from . import utils
 from ._logger import ParserLogger
 from .exceptions import UnreachableException, SemanticException
-from itertools import product
+from itertools import product, groupby
 from functools import reduce
 import pypika as pk
 
@@ -17,14 +17,18 @@ class Select:
 
     class PDNF:
         def __init__(self, expression):
-            # assert isinstance(expression, expr.BooleanExpression)
             if isinstance(expression, (expr.ComparisonPredicate, expr.NumericExpression)):
                 expression = expr.Is(expression, True).convolution
 
             # Начальное выражение
             self.raw_expression = expression
             # Базисы выражения
-            self.base_expressions = self.get_base_expressions(expression)
+            raw_base = self.get_base_expressions(expression)
+            if not raw_base[0]:
+                expression.set_base()
+                self.base_expressions = [expression]
+            else:
+                self.base_expressions = raw_base[0]
             # Комбинации, который дают True в выражении
             self.true_combination = [
                 vector
@@ -90,19 +94,73 @@ class Select:
         def get_base_expressions(self, expression):
             if isinstance(expression, expr.Is):
                 return self.get_base_expressions(expression.left)
-            elif isinstance(expression, expr.DoubleBooleanExpression):
-                left = self.get_base_expressions(expression.left)
-                right = self.get_base_expressions(expression.right)
-                return left + right
             elif isinstance(expression, expr.Not):
                 return self.get_base_expressions(expression.value)
+            elif isinstance(expression, expr.DoubleBooleanExpression):
+                meta = [
+                    self.get_base_expressions(arg)
+                    for arg in expression.args
+                ]
+                base_args, not_base_args = reduce(
+                    lambda acc, e: acc[e[0]].append(e[1]) or acc,
+                    (
+                        (idx, (arg, bases, tables))
+                        for arg, (bases, tables) in zip(expression.args, meta)
+                        for idx in [0 if bases else 1]
+                    ),
+                    [[], []]
+                )
+                new_args = [
+                    arg
+                    for arg, _, _ in base_args
+                ]
+                new_bases = [
+                    base
+                    for _, bases, _ in base_args
+                    for base in bases
+                ]
+                all_used_tables = reduce(lambda a, b: a | b, [t for _, t in meta])
+                if not_base_args:
+                    for arg, _, tbl in not_base_args:
+                        assert len(tbl) <= 1
+
+                    all_tables = reduce(lambda a, b: a | b, [tbl for _, _, tbl in not_base_args])
+                    if len(all_tables) <= 1 and not base_args:
+                        return [], all_tables
+
+                    used_tables = [(arg, tbl.pop() if tbl else None) for arg, _, tbl in not_base_args]
+                    used_tables = sorted(used_tables, key=lambda x: id(x[1]))
+
+                    for group, rows in groupby(used_tables, key=lambda x: id(x[1])):
+                        args = [a for a, t in rows]
+
+                        if group is None:
+                            assert len(args) == 0
+                            new_args.append(args[0])
+                            continue
+                        if len(args) == 1:
+                            arg, = args
+                        else:
+                            arg = expression.__class__(*args)
+
+                        arg.set_base()
+                        new_args.append(arg)
+                        new_bases.append(arg)
+                expression.args = new_args
+                return new_bases, all_used_tables
+
             elif isinstance(expression, (
                 expr.ComparisonPredicate,
                 expr.NumericExpression,
-                st.Column,
             )):
-                return [expression]
-            return []
+                columns = Select.get_used_columns(expression)
+                tables = {c.table for c in columns}
+                if len(tables) > 1:
+                    expression.set_base()
+                    return [expression], tables
+                return [], tables
+            elif isinstance(expression, st.Column):
+                return [], {expression.table}
 
         def __grouping(self, idx):
             _false, _none, _true = reduce(
@@ -295,6 +353,8 @@ class Select:
             return join_expr_equals
 
         def pika(self):
+            if not self.not_used_expression:
+                return self.raw_expression.pika()
             and_ = None
             or_ = None
             index = None
@@ -606,8 +666,7 @@ class Select:
             elif isinstance(expression, expr.Is):
                 expression.left = self.validate_expression(expression.left, visible)
             elif isinstance(expression, expr.DoubleBooleanExpression):
-                expression.left = self.validate_expression(expression.left, visible)
-                expression.right = self.validate_expression(expression.right, visible)
+                expression.args = [self.validate_expression(arg, visible) for arg in expression.args]
             else:
                 raise UnreachableException()
 
@@ -640,13 +699,16 @@ class Select:
             return [expression]
         elif isinstance(expression, expr.Is):
             return Select.get_used_columns(expression.left, count_used)
-        elif isinstance(expression, (
-            expr.DoubleBooleanExpression,
-            expr.DoubleNumericExpression,
-        )):
+        elif isinstance(expression, expr.DoubleNumericExpression):
             left = Select.get_used_columns(expression.left, count_used)
             right = Select.get_used_columns(expression.right, count_used)
             return left + right
+        elif isinstance(expression, expr.DoubleBooleanExpression):
+            return [
+                column
+                for arg in expression.args
+                for column in Select.get_used_columns(arg, count_used)
+            ]
         elif isinstance(expression, (
             expr.Not,
             expr.UnarySign,

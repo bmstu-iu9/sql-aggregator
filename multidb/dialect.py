@@ -178,25 +178,35 @@ class MySQL(BaseDialect):
         assert all(arr[0] == a for a in arr)
         return arr[0]
 
+    TYPES = {
+        'bigint':            BaseDialect.LONG,
+        'tinyint':           BaseDialect.BOOL,
+        'character':         BaseDialect.STRING,
+        'varchar':           BaseDialect.STRING,
+        'int':               BaseDialect.INT,
+        'float':             BaseDialect.FLOAT,
+    }
+
     SUPPORTED_INDEX_TYPE = {
         'btree': Index.BTREE
     }
 
     def get_indexes(self, cursor, schema, table):
         query = (
-            "select"
-            "  index_name"      # 0
-            ", not non_unique"  # 1
-            ", collation"       # 2
-            ", index_type"      # 3
-            ", column_name"     # 4
-            ", seq_in_index"    # 5
+            "select "
+            "  index_name "      # 0
+            ", not non_unique "  # 1
+            ", collation "       # 2
+            ", index_type "      # 3
+            ", column_name "     # 4
+            ", seq_in_index "    # 5
             "from information_schema.statistics "
             "where "
             "table_schema='{}' "
             "and table_name='{}' "
             "order by index_name, seq_in_index;"
         ).format(schema, table)
+
         cursor.execute(query)
         return [
             Index(group, columns, is_unique, kind)
@@ -204,11 +214,11 @@ class MySQL(BaseDialect):
                 cursor.fetchall(),
                 key=itemgetter(0)
             )
-            for columns, uniques, index_types in zip(*[
+            for columns, uniques, index_types in [zip(*[
                 (IndexColumn(col_name, collation), bool(unique), index_type)
                 for _, unique, collation, index_type, col_name, _ in data
                 for collation in [True if collation == 'A' else False if collation == 'D' else None]
-            ])
+            ])]
             for kind in [self.SUPPORTED_INDEX_TYPE.get(
                 self.__check_data(index_types).lower()
             )]
