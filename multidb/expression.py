@@ -630,6 +630,7 @@ class ComparisonPredicate(BasePredicate):
     def reverse(self):
         self.left, self.right = self.right, self.left
         self.op = self.MAP_REVERSE.get(self.op, self.op)
+        self.action = self.MAP_ACTION[self.op]
 
     def pika(self):
         left = self.left.pika()

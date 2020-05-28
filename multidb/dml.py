@@ -6,9 +6,10 @@ from . import structures as st
 from . import symbols as ss
 from . import utils
 from ._logger import ParserLogger
-from .exceptions import UnreachableException, SemanticException, NotSupported
+from .exceptions import UnreachableException, SemanticException
 from itertools import product
 from functools import reduce
+import pypika as pk
 
 
 class Select:
@@ -20,19 +21,21 @@ class Select:
             if isinstance(expression, (expr.ComparisonPredicate, expr.NumericExpression)):
                 expression = expr.Is(expression, True).convolution
 
+            # Начальное выражение
             self.raw_expression = expression
+            # Базисы выражения
             self.base_expressions = self.get_base_expressions(expression)
-
+            # Комбинации, который дают True в выражении
             self.true_combination = [
                 vector
                 for vector in product(
                     [False, None, True],
                     repeat=len(self.base_expressions)
                 )
-                for value in [expression.calculate(list(vector))]
+                for value in [expression.calculate(list(vector[::-1]))]
                 if value
             ]
-
+            # Номера базисов, которые дают всегда False, None, True соответственно
             self.all_false, self.all_none, self.all_true = reduce(
                 lambda acc, e: acc[e[0]].append(e[1]) or acc,
                 (
@@ -51,7 +54,15 @@ class Select:
                 ),
                 [[], [], []]
             )
-
+            # Замена базисов. Например если базис всегда False,
+            # то он заменяется на base is False,
+            # также ищутся ненужные базисы (от которых не зависит выражение)
+            self.equivalent_basis = [
+                self.check_base_expr(i, basis)
+                for i, basis in enumerate(self.base_expressions)
+            ]
+            # Используемые колонки в базисах,
+            # для ComparisonPredicate колонки ищутся отдельно для правой и левой части
             self.used_columns = [
                 val
                 for b in self.base_expressions
@@ -61,7 +72,12 @@ class Select:
                     (Select.get_used_columns(b, True), None)
                 ]
             ]
-
+            # Пары колонок которые используются при JOIN, например, для
+            # `select * from a inner join b on a.id = b.id and a.val >= b.val`
+            # в список попадут колонки (a.id, b.id)
+            self.join_expr_equals = []
+            # Не используемые выражения. Выражения,
+            # фильтрация по которым была осуществленна на уровне Базы данных
             self.not_used_expression = []
 
         def __repr__(self):
@@ -107,7 +123,7 @@ class Select:
             )
             return _false, _none, _true
 
-        def _check_expr_one_table(self, i, basis, table):
+        def check_base_expr(self, i, basis):
             new_expr = None
             if i in self.all_true:  # e is True
                 new_expr = expr.Is(basis, True)
@@ -119,7 +135,10 @@ class Select:
                 # Проверка на `is not` or any
                 _false, _none, _true = self.__grouping(i)
                 if _false == _none == _true:  # Any
-                    pass
+                    self.not_used_expression.append(i)
+                    lc, rc = self.used_columns[i]
+                    for column in lc + (rc or []):
+                        column.count_used -= 1
                 elif _false == _none and not _true:  # e is not True
                     new_expr = expr.Not(expr.Is(basis, True))
                 elif _false == _true and not _none:  # e is not None
@@ -127,11 +146,8 @@ class Select:
                 elif _none == _true and not _false:  # e is not False
                     new_expr = expr.Not(expr.Is(basis, False))
                 else:
-                    return False
-            if new_expr:
-                table.filters.append(new_expr)
-            self.not_used_expression.append(i)
-            return True
+                    return False, None
+            return True, new_expr
 
         def basis_classifier_for_where(self):
             """
@@ -152,7 +168,14 @@ class Select:
                 for column in raw_used_columns:
                     column.count_used -= 1
                 return
-            for i, (basis, columns) in enumerate(zip(self.base_expressions, self.used_columns)):
+            for i, (basis, (flag, new_basis), columns) in enumerate(zip(
+                self.base_expressions,
+                self.equivalent_basis,
+                self.used_columns
+            )):
+                if not new_basis:
+                    continue
+
                 left_columns, right_columns = columns
                 right_columns = right_columns or []
                 all_columns = left_columns + right_columns
@@ -161,14 +184,11 @@ class Select:
                     for column in all_columns
                 }
                 assert len(all_columns)
-                if len(table) > 1:
-                    # Если условие на 2 таблицы и более,
-                    # то пропускаем
-                    continue
 
-                table = table.pop()
-                flag = self._check_expr_one_table(i, basis, table)
-                if flag:
+                if len(table) == 1:
+                    table = table.pop()
+                    table.filters.append(new_basis)
+                    self.not_used_expression.append(i)
                     for column in all_columns:
                         column.count_used -= 1
 
@@ -179,7 +199,13 @@ class Select:
             join_left_tables = set(join_left_tables)
             join_right_tables = set(join_right_tables)
             join_expr_equals = []
-            for i, (basis, columns) in enumerate(zip(self.base_expressions, self.used_columns)):
+
+            for i, (basis, (flag, new_basis), columns) in enumerate(zip(
+                    self.base_expressions,
+                    self.equivalent_basis,
+                    self.used_columns
+            )):
+
                 left_columns, right_columns = columns
                 if isinstance(basis, expr.ComparisonPredicate):
                     assert left_columns or right_columns
@@ -203,7 +229,7 @@ class Select:
                         continue
 
                     if left_table <= join_right_tables and right_table <= join_left_tables:
-                        # Привод к виду, где левая часть предиката
+                        # Приведение к виду, где левая часть предиката
                         # соответствует левой таблице, а правая часть
                         # соответствует правой таблице
                         basis.reverse()
@@ -213,9 +239,11 @@ class Select:
                     if len(left_table) == 1 and len(right_table) == 1:
                         left_table = left_table.pop()
                         right_table = right_table.pop()
+
                         if left_table == right_table:  # Условие на одну таблицу
-                            flag = self._check_expr_one_table(i, basis, right_table)
-                            if flag:
+                            if new_basis:
+                                left_table.filters.append(new_basis)
+                                self.not_used_expression.append(i)
                                 for column in left_columns + right_columns:
                                     column.count_used -= 1
                         elif (
@@ -235,15 +263,17 @@ class Select:
                     elif len(left_table) == 1 and len(right_table) == 0:
                         # tbl.column <= 10
                         table = left_table.pop()
-                        flag = self._check_expr_one_table(i, basis, table)
-                        if flag:
+                        if new_basis:
+                            table.filters.append(new_basis)
+                            self.not_used_expression.append(i)
                             for column in left_columns:
                                 column.count_used -= 1
                     elif len(left_table) == 0 and len(right_table) == 1:
                         # tbl.column <= 10
                         table = right_table.pop()
-                        flag = self._check_expr_one_table(i, basis, table)
-                        if flag:
+                        if new_basis:
+                            table.filters.append(new_basis)
+                            self.not_used_expression.append(i)
                             for column in right_columns:
                                 column.count_used -= 1
                     continue
@@ -253,17 +283,70 @@ class Select:
                         column.table
                         for column in left_columns
                     }
-                    if len(table) > 1:
-                        continue
-                    table = table.pop()
-                    flag = self._check_expr_one_table(i, basis, table)
-                    if flag:
-                        for column in left_columns:
-                            column.count_used -= 1
+                    if len(table) == 1:
+                        table = table.pop()
+                        if new_basis:
+                            table.filters.append(new_basis)
+                            self.not_used_expression.append(i)
+                            for column in left_columns:
+                                column.count_used -= 1
+
+            self.join_expr_equals = join_expr_equals
             return join_expr_equals
 
-        def calculate(self, row):
-            pass
+        def pika(self):
+            and_ = None
+            or_ = None
+            index = None
+
+            not_used_expression = set(self.not_used_expression)
+            idx_or, idx_and = reduce(
+                lambda acc, e: acc[e[0]].append(e[1]) or acc,
+                (
+                    (int(flag), i)
+                    for i, (flag, new_basis) in enumerate(self.equivalent_basis)
+                    if i not in not_used_expression
+                ),
+                [[], []]
+            )
+
+            if idx_or:
+                true_combination = set(zip(*[
+                    col
+                    for i, col in enumerate(zip(*self.true_combination))
+                    if i in idx_or
+                ]))
+                used_expressions = [
+                    self.base_expressions[i]
+                    for i in idx_or
+                ]
+                or_ = []
+                for is_values in true_combination:
+                    crit = pk.Criterion.all(
+                        expr.Is(e, v).pika()
+                        for e, v in zip(used_expressions, is_values)
+                    )
+                    or_.append(crit)
+                or_ = pk.Criterion.any(or_)
+
+            if idx_and:
+                and_ = [
+                    new_basis.pika()
+                    for i, (flag, new_basis) in enumerate(self.equivalent_basis)
+                    if i in idx_and
+                ]
+                and_ = pk.Criterion.all(and_)
+
+            if self.join_expr_equals:
+                index = pk.Criterion.all([
+                    (a.pika() == b.pika())
+                    for a, b in self.join_expr_equals
+                ])
+
+            if not any([index, and_, or_]):
+                return None
+            else:
+                return pk.Criterion.all([e for e in [index, and_, or_] if e])
 
     def __init__(self, cc, select_list, from_, where=None, group=None, having=None):
         if len(from_) != 1:
@@ -419,24 +502,26 @@ class Select:
             return [table]
         elif isinstance(table, jn.CrossJoin):
             return self.validate_join(table.left) + self.validate_join(table.right)
-        elif isinstance(table, jn.InnerJoin):
+        elif isinstance(table, jn.QualifiedJoin):
             left = self.validate_join(table.left)
             right = self.validate_join(table.right)
-            table.set_indexed_expression(table.specification.basis_classifier_inner_join(left, right))
+            if isinstance(table, jn.InnerJoin):
+                join_expr_equals = table.specification.basis_classifier_inner_join(left, right)
+            elif isinstance(table, jn.LeftJoin):
+                join_expr_equals = table.specification.basis_classifier_left_join(left, right)
+            elif isinstance(table, jn.RightJoin):
+                join_expr_equals = table.specification.basis_classifier_right_join(left, right)
+            elif isinstance(table, jn.FullJoin):
+                join_expr_equals = table.specification.basis_classifier_full_join(left, right)
+            else:
+                raise UnreachableException()
+            if len(left) == 1:
+                ltbl, = left
+                ltbl.add_sorted_columns = [a for a, b in join_expr_equals]
+            if len(right) == 1:
+                rtbl, = right
+                rtbl.add_sorted_columns = [b for a, b in join_expr_equals]
             return left + right
-        elif isinstance(table, jn.LeftJoin):
-            left = self.validate_join(table.left)
-            right = self.validate_join(table.right)
-            # Todo: Обработка Left join
-            return left + right
-        elif isinstance(table, jn.RightJoin):
-            left = self.validate_join(table.left)
-            right = self.validate_join(table.right)
-            # Todo: Обработка Right join
-            return left + right
-        elif isinstance(table, jn.FullJoin):
-            self.logger.error('Full join not supported')
-            return []
         else:
             raise UnreachableException
 
@@ -572,3 +657,15 @@ class Select:
             right = Select.get_used_columns(expression.right, count_used)
             return left + right
         return []
+
+    def get_sql(self):
+        st.Table.IS_SQLITE = True
+        from_sql = ', '.join([f.get_sql() for f in self.from_])
+        select_sql = ', '.join([s.pika().get_sql(with_namespace=True) for s in self.select_list])
+        sql = 'SELECT {} FROM {}'.format(select_sql, from_sql)
+        if self.where:
+            where_pika = self.where.pika()
+            if where_pika:
+                sql = '{} WHERE {}'.format(sql, where_pika.get_sql(with_namespace=True))
+        st.Table.IS_SQLITE = False
+        return sql

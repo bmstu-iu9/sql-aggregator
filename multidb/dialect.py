@@ -40,6 +40,14 @@ class BaseDialect:
     FLOAT = 'float'
     TYPES = {}
 
+    BASE_TYPE_TO_SQLITE_TYPE = {
+        BOOL: 'boolean',
+        LONG: 'bigint',
+        INT: 'integer',
+        STRING: 'varchar',
+        FLOAT: 'float',
+    }
+
     DBMS_TO_DRIVER = {}
 
     SQL_GET_SCHEMAS = (

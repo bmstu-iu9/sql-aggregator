@@ -40,6 +40,8 @@ class DBMS:
 
 
 class Table:
+    IS_SQLITE = False
+    count = 0
     logger = logging.getLogger('table')
 
     def __init__(self, dbms: DBMS, db: str, schema: str, table: str):
@@ -55,6 +57,7 @@ class Table:
         self._db = pk.Database(db)
         self._schema = pk.Schema(schema, self._db)
         self._table = pk.Table(table, self._schema)
+        self.sqlite_table = pk.Table('{}_{}'.format(table, Table.count))
 
         self.indexes = self.dbms.dialect.get_indexes(self.cursor, schema, table)
         self.columns, self.name_to_column = self.__get_columns()
@@ -67,7 +70,11 @@ class Table:
             raise SemanticException(msg)
 
         self.filters = []
-        self.bias = 0
+
+        Table.count += 1
+
+    def get_sql(self):
+        return self.sqlite_table.get_sql() if Table.IS_SQLITE else self._table.get_sql()
 
     def __get_columns(self):
         raw_columns = self.dbms.dialect.all_columns(self.cursor, self.schema, self.table)
@@ -109,11 +116,6 @@ class Table:
             column.idx = i
         return columns
 
-    def set_bias(self, bias):
-        for column in self.selected_columns:
-            column.idx += bias - self.bias
-        self.bias = bias
-
     def __del__(self):
         try:
             self.cursor.close()
@@ -132,6 +134,13 @@ class Table:
             q = q.where(f.pika())
         return q
 
+    def create_query(self):
+        columns = pk.Columns(*[
+            (column.name, column.type)
+            for column in self.selected_columns
+        ])
+        return pk.SQLLiteQuery.create_table(self.sqlite_table).columns(*columns)
+
     @utils.lazy_property
     def size(self):
         return len(self.selected_columns)
@@ -141,6 +150,7 @@ class Table:
 
 
 class Column(mx.AsMixin):
+
     def __init__(self, table: Table, name: str, is_null: bool, dtype: str,
                  max_len: int, max_size: int, indexes=None, supported=True):
         super().__init__()
@@ -162,8 +172,14 @@ class Column(mx.AsMixin):
 
         self.idx = None
 
+    @utils.lazy_property
+    def type(self):
+        return ('{}({})'.format(dialect.BaseDialect.BASE_TYPE_TO_SQLITE_TYPE[self.dtype], self.max_len)
+                if self.max_len is not None else
+                dialect.BaseDialect.BASE_TYPE_TO_SQLITE_TYPE[self.dtype])
+
     def pika(self):
-        return pk.Field(self.name)
+        return pk.Field(self.name, table=self.table.sqlite_table) if Table.IS_SQLITE else pk.Field(self.name)
 
     @property
     def used(self):
@@ -202,5 +218,5 @@ class Column(mx.AsMixin):
             self.visible
         )
 
-    def express(self, row):
-        return row[self.idx]
+    def __repr__(self):
+        return 'Column({}.{})'.format(self.table.table, self.name)
