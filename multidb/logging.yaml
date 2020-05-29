@@ -8,27 +8,27 @@ formatters:
 handlers:
   console:
     class: logging.StreamHandler
-    level: DEBUG
+    level: WARNING
     formatter: simple
     stream: ext://sys.stdout
   file:
     class: logging.handlers.RotatingFileHandler
-    level: DEBUG
+    level: WARNING
     formatter: only_msg
     filename: tree.log
 loggers:
   lexer:
-    level: DEBUG
+    level: WARNING
     handlers: [console]
   parser:
-    level: DEBUG
+    level: WARNING
     handlers: [console]
   tree:
-    level: DEBUG
-    handlers: [file]
+    level: WARNING
+    handlers: [console]
   selection:
-    level: DEBUG
+    level: WARNING
     handlers: [console]
   psql_dialect:
-    level: DEBUG
+    level: WARNING
     handlers: [console]

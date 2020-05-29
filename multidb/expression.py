@@ -1,25 +1,50 @@
 import logging
 from datetime import date, datetime
-from itertools import combinations_with_replacement
-from typing import Union
+from typing import Union, List
+
+import pypika as pk
 
 from . import mixins as mx
 from . import symbols as ss
 from . import utils
+from .exceptions import UnreachableException
+from functools import reduce
 
 
 class BaseExpression(mx.AsMixin):
     @property
     def convolution(self):
+        """
+        Свертка - упрощение выражения
+        """
         return self
 
     @property
     def to_int(self):
+        """
+        Приведение к числу
+        """
         return self
 
     @property
     def to_bool(self):
+        """
+        Приведение к True/False
+        """
         return self
+
+    def pika(self):
+        """
+        Для генерации SELECT
+        """
+        raise NotImplementedError()
+
+    def __init__(self):
+        super().__init__()
+        self.is_base = False
+
+    def set_base(self, value=True):
+        self.is_base = value
 
 
 class PrimaryValue(BaseExpression):
@@ -54,9 +79,12 @@ class PrimaryValue(BaseExpression):
             return Column(value)
         raise ValueError('Invalid data type: {}({})'.format(type(value), value))
 
-    def __init__(self, value, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, value):
+        super().__init__()
         self.value = value
+
+    def pika(self):
+        return self.value
 
     def __repr__(self):
         return '{}({})'.format(self.__class__.__name__, self.value)
@@ -102,30 +130,43 @@ class Bool(PrimaryValue):
 class Null(PrimaryValue):
     KIND = PrimaryValue.NULL
 
-    def __init__(self, value=None, *args, **kwargs):
-        super().__init__(value, *args, **kwargs)
+    def __init__(self, value=None):
+        super().__init__(value)
 
 
 class Column(PrimaryValue):
+    """
+    Используется как заглушка на момент парсинга
+    Потом заменяется на объект Column из structures
+    """
     KIND = PrimaryValue.COLUMN
+
+    def pika(self):
+        return pk.Field(self.value.get_data()[-1])
 
 
 class SimpleExpression(BaseExpression):
     logger = logging.getLogger('simple_expression')
 
-    def __init__(self, expr, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, expr):
+        super().__init__()
         self.expr = expr
+
+    def pika(self):
+        return self.expr.pika()
 
 
 class NumericExpression(BaseExpression):
     logger = logging.getLogger('numeric_expression')
 
+    def pika(self):
+        raise NotImplementedError()
+
 
 class UnarySign(NumericExpression):
-    def __init__(self, value: BaseExpression, sign, *args, **kwargs):
+    def __init__(self, value: BaseExpression, sign):
         assert sign in (ss.minus_sign, ss.plus_sign)
-        super().__init__(*args, **kwargs)
+        super().__init__()
         self.value = value
         self.is_minus = sign == ss.minus_sign
         self.sign = -1 if self.is_minus else 1
@@ -143,6 +184,10 @@ class UnarySign(NumericExpression):
             return UnarySign(self.value.value, sign)
         return self
 
+    def pika(self):
+        value = self.value.pika()
+        return value if self.sign == 1 else -value
+
     def __repr__(self):
         return '{}CastToInt({!r})'.format('-' if self.is_minus else '', self.value)
 
@@ -154,8 +199,8 @@ class DoubleNumericExpression(NumericExpression):
     DIV = '/'
     op = None
 
-    def __init__(self, left: BaseExpression, right: BaseExpression, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, left: BaseExpression, right: BaseExpression):
+        super().__init__()
         self.left = left
         self.right = right
 
@@ -183,6 +228,9 @@ class DoubleNumericExpression(NumericExpression):
 
         return self.special_rules()
 
+    def pika(self):
+        raise NotImplementedError()
+
     def __repr__(self):
         return '({!r} {} {!r})'.format(self.left, self.op, self.right)
 
@@ -200,6 +248,9 @@ class Add(DoubleNumericExpression):
             return self.left
         return self
 
+    def pika(self):
+        return self.left.pika() + self.right.pika()
+
 
 class Sub(DoubleNumericExpression):
     op = DoubleNumericExpression.SUB
@@ -213,6 +264,9 @@ class Sub(DoubleNumericExpression):
         if isinstance(self.right, PrimaryNumeric) and self.right.value == 0:
             return self.left
         return self
+
+    def pika(self):
+        return self.left.pika() - self.right.pika()
 
 
 class Mul(DoubleNumericExpression):
@@ -228,6 +282,9 @@ class Mul(DoubleNumericExpression):
         ):
             return Int(0)
         return self
+
+    def pika(self):
+        return self.left.pika() * self.right.pika()
 
 
 class Div(DoubleNumericExpression):
@@ -266,18 +323,40 @@ class Div(DoubleNumericExpression):
 
         return self.special_rules()
 
+    def pika(self):
+        return self.left.pika() / self.right.pika()
+
 
 class BooleanExpression(BaseExpression):
     logger = logging.getLogger('boolean_expression')
 
     def calculate(self, vector):
-        raise NotImplementedError
+        raise NotImplementedError()
+
+    @staticmethod
+    def _get_value_for_calculate(value, vector):
+        if value.is_base:
+            value = vector.pop()
+        if isinstance(value, BooleanExpression):
+            value = value.calculate(vector)
+        elif isinstance(value, Bool):
+            value = value.value
+        elif isinstance(value, Null):
+            value = None
+        elif isinstance(value, bool) or value is None:
+            pass
+        else:
+            raise UnreachableException()
+        return value
+
+    def pika(self):
+        raise NotImplementedError()
 
 
 class Not(BooleanExpression):
 
-    def __init__(self, value: BaseExpression, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, value: BaseExpression):
+        super().__init__()
         self.value = value
 
     @property
@@ -293,11 +372,16 @@ class Not(BooleanExpression):
         return self
 
     def calculate(self, vector):
+        if self.is_base:
+            return vector.pop()
         if isinstance(self.value, BooleanExpression):
             value = self.value.calculate(vector)
         else:
             value = vector.pop()
         return None if value is None else not value
+
+    def pika(self):
+        return not self.value.pika()
 
     def __repr__(self):
         return 'not {!r}'.format(self.value)
@@ -309,110 +393,169 @@ class DoubleBooleanExpression(BooleanExpression):
     IS = 'is'
     op = None
 
-    def __init__(self, left: BaseExpression, right: Union[BaseExpression, bool, None], *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.left = left
-        self.right = right
+    def __init__(self, *args):
+        super().__init__()
+        self.args: List[BaseExpression] = list(args)
 
     def __repr__(self):
-        return '({!r} {} {!r})'.format(self.left, self.op, self.right)
+        return '{}({})'.format(
+            self.__class__.__name__,
+            ', '.join(repr(arg) for arg in self.args)
+        )
 
     def calculate(self, vector):
-        raise NotImplementedError
+        raise NotImplementedError()
 
-    @staticmethod
-    def _get_value_for_calculate(value, vector):
-        if isinstance(value, BooleanExpression):
-            value = value.calculate(vector)
-        elif isinstance(value, Bool):
-            value = value.value
-        elif isinstance(value, Null):
-            value = None
-        else:
-            value = vector.pop()
-        return value
+    def special_rules(self, bool_, none):
+        return self
+
+    @property
+    def convolution(self):
+        self.args = [arg.convolution.to_bool for arg in self.args]
+        bool_, none, self_classes, other = reduce(
+            lambda acc, e: acc[e[0]].append(e[1]) or acc,
+            (
+                (idx, arg)
+                for arg in self.args
+                for idx in [
+                    0
+                    if isinstance(arg, Bool) else
+                    1
+                    if isinstance(arg, Null) else
+                    2
+                    if isinstance(arg, self.__class__) else
+                    3
+                ]
+            ),
+            [[], [], [], []]
+        )
+        sub_bool, sub_none, sub_other = reduce(
+            lambda acc, e: acc[e[0]].append(e[1]) or acc,
+            (
+                (idx, arg)
+                for self_class in self_classes
+                for arg in self_class.args
+                for idx in [
+                    0
+                    if isinstance(arg, Bool) else
+                    1
+                    if isinstance(arg, Null) else
+                    2
+                ]
+            ),
+            [[], [], []]
+        )
+        bool_ += sub_bool
+        none += sub_none
+        other += sub_other
+        if none and not (bool_ or self_classes or other):
+            return Null()
+        self.args = other
+        return self.special_rules(bool_, none)
+
+    def pika(self):
+        raise NotImplementedError()
 
 
 class Or(DoubleBooleanExpression):
     op = DoubleBooleanExpression.OR
 
-    @property
-    def convolution(self):
-        self.left = self.left.convolution.to_bool
-        self.right = self.right.convolution.to_bool
-
-        if isinstance(self.left, Bool) and isinstance(self.right, Bool):
-            return Bool(self.left.value or self.right.value)
-
-        if (
-            isinstance(self.left, Bool) and self.left.value or
-            isinstance(self.right, Bool) and self.right.value
-        ):
+    def special_rules(self, bool_, none):
+        bool_ = (bool_ or None) and reduce(lambda a, b: a or b, [b.value for b in bool_])
+        if bool_ is True:
             return Bool(True)
 
-        if (
-            isinstance(self.left, Bool) and not self.left.value and
-            isinstance(self.right, Bool) and not self.right.value
-        ):
+        elif self.args and none:
+            self.args.append(Null())
+            return self
+
+        elif none and bool_ is False:
+            return Null()
+
+        elif not self.args and bool_ is False:
             return Bool(False)
 
-        if isinstance(self.left, Null) and isinstance(self.right, Null):
-            return Null()
+        assert self.args
 
         return self
 
     def calculate(self, vector):
-        left = self._get_value_for_calculate(self.left, vector)
-        right = self._get_value_for_calculate(self.right, vector)
-
-        if left or right:
+        if self.is_base:
+            return vector.pop()
+        args = [self._get_value_for_calculate(arg, vector) for arg in self.args]
+        none, bool_ = reduce(
+            lambda acc, e: acc[e[0]].append(e[1]) or acc,
+            (
+                (idx, arg)
+                for arg in args
+                for idx in [0 if arg is None else 1]
+            ),
+            [[], []]
+        )
+        bool_ = (bool_ or None) and reduce(lambda a, b: a or b, bool_)
+        if bool_:
             return True
-        elif left is None or right is None:
+        if none:
             return None
         return False
+
+    def pika(self):
+        return pk.Criterion.any([arg.pika() for arg in self.args])
 
 
 class And(DoubleBooleanExpression):
     op = DoubleBooleanExpression.AND
 
-    @property
-    def convolution(self):
-        self.left = self.left.convolution.to_bool
-        self.right = self.right.convolution.to_bool
-
-        if isinstance(self.left, Bool) and isinstance(self.right, Bool):
-            return Bool(self.left.value and self.right.value)
-
-        if (
-            isinstance(self.left, Bool) and self.left.value and
-            isinstance(self.right, Bool) and self.right.value
-        ):
-            return Bool(True)
-
-        if (
-            isinstance(self.left, Bool) and not self.left.value or
-            isinstance(self.right, Bool) and not self.right.value
-        ):
+    def special_rules(self, bool_, none):
+        bool_ = (bool_ or None) and reduce(lambda a, b: a and b, [b.value for b in bool_])
+        if bool_ is False:
             return Bool(False)
 
-        if isinstance(self.left, Null) and isinstance(self.right, Null):
+        elif self.args and none:
+            self.args.append(Null())
+            return self
+
+        elif none and bool_ is True:
             return Null()
+
+        elif not self.args and bool_ is True:
+            return Bool(True)
+
+        assert self.args
 
         return self
 
     def calculate(self, vector):
-        left = self._get_value_for_calculate(self.left, vector)
-        right = self._get_value_for_calculate(self.right, vector)
-
-        if left is False or right is False:
+        if self.is_base:
+            return vector.pop()
+        args = [self._get_value_for_calculate(arg, vector) for arg in self.args]
+        none, bool_ = reduce(
+            lambda acc, e: acc[e[0]].append(e[1]) or acc,
+            (
+                (idx, arg)
+                for arg in args
+                for idx in [0 if arg is None else 1]
+            ),
+            [[], []]
+        )
+        bool_ = (bool_ or None) and reduce(lambda a, b: a and b, bool_)
+        if bool_ is False:
             return False
-        elif left and right:
-            return True
-        return None
+        if none:
+            return None
+        return True
+
+    def pika(self):
+        return pk.Criterion.all([arg.pika() for arg in self.args])
 
 
-class Is(DoubleBooleanExpression):
+class Is(BooleanExpression):
     op = DoubleBooleanExpression.IS
+
+    def __init__(self, left: BaseExpression, right: Union[bool, None]):
+        super().__init__()
+        self.left = left
+        self.right = right
 
     @property
     def convolution(self):
@@ -426,12 +569,24 @@ class Is(DoubleBooleanExpression):
         return self
 
     def calculate(self, vector):
+        if self.is_base:
+            return vector.pop()
         left = self._get_value_for_calculate(self.left, vector)
         return left is self.right
 
+    def pika(self):
+        if self.right is True:
+            return self.left.pika().istrue()
+        elif self.right is False:
+            return self.left.pika().isfalse()
+        elif self.right is None:
+            return self.left.pika().isnull()
+        raise UnreachableException()
+
 
 class BasePredicate(BaseExpression):
-    pass
+    def pika(self):
+        raise NotImplementedError()
 
 
 class ComparisonPredicate(BasePredicate):
@@ -456,11 +611,21 @@ class ComparisonPredicate(BasePredicate):
         for k, v in [(a, b), (b, a)]
     }
 
-    def __init__(self, left, right, op, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    MAP_ACTION = {
+        ss.equals_operator: lambda a, b: a == b,
+        ss.not_equals_operator: lambda a, b: a != b,
+        ss.less_than_operator: lambda a, b: a < b,
+        ss.less_than_or_equals_operator: lambda a, b: a <= b,
+        ss.greater_than_operator: lambda a, b: a > b,
+        ss.greater_than_or_equals_operator: lambda a, b: a >= b,
+    }
+
+    def __init__(self, left, right, op):
+        super().__init__()
         self.left = left
         self.right = right
         self.op = op
+        self.action = self.MAP_ACTION[self.op]
 
     @property
     def convolution(self):
@@ -472,18 +637,7 @@ class ComparisonPredicate(BasePredicate):
         if isinstance(self.left, PrimaryNumeric) and isinstance(self.right, PrimaryNumeric):
             left = self.left.value
             right = self.right.value
-            if self.op == ss.equals_operator:
-                return Bool(left == right)
-            elif self.op == ss.not_equals_operator:
-                return Bool(left != right)
-            elif self.op == ss.less_than_operator:
-                return Bool(left < right)
-            elif self.op == ss.less_than_or_equals_operator:
-                return Bool(left <= right)
-            elif self.op == ss.greater_than_operator:
-                return Bool(left > right)
-            elif self.op == ss.greater_than_or_equals_operator:
-                return Bool(left >= right)
+            return Bool(self.action(left, right))
         elif isinstance(self.left, Null) or isinstance(self.right, Null):
             return Null()
         return self
@@ -491,6 +645,12 @@ class ComparisonPredicate(BasePredicate):
     def reverse(self):
         self.left, self.right = self.right, self.left
         self.op = self.MAP_REVERSE.get(self.op, self.op)
+        self.action = self.MAP_ACTION[self.op]
+
+    def pika(self):
+        left = self.left.pika()
+        right = self.right.pika()
+        return self.action(left, right)
 
     def __repr__(self):
         return '({!r} {} {!r})'.format(self.left, ss.NAME_TO_SYMBOL.get(self.op), self.right)
@@ -498,9 +658,11 @@ class ComparisonPredicate(BasePredicate):
 
 class StringExpression(BaseExpression):
     # Todo: Does not work
-    pass
+    def pika(self):
+        raise NotImplementedError()
 
 
 class DatetimeExpression(BaseExpression):
     # Todo: Does not work
-    pass
+    def pika(self):
+        raise NotImplementedError()

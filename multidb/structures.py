@@ -7,6 +7,7 @@ from pypika import dialects as pika_dialects
 from . import dialect
 from . import mixins as mx
 from .exceptions import SemanticException
+from . import utils
 
 
 class DBMS:
@@ -39,6 +40,8 @@ class DBMS:
 
 
 class Table:
+    IS_SQLITE = False
+    count = 0
     logger = logging.getLogger('table')
 
     def __init__(self, dbms: DBMS, db: str, schema: str, table: str):
@@ -52,8 +55,10 @@ class Table:
         self.table = table
 
         self._db = pk.Database(db)
-        self._schema = pk.Schema(schema, self._db)
-        self._table = pk.Table(table, self._schema)
+        self._schema = pk.Schema(schema)
+        self._table = pk.Table(table, self._schema, query_cls=self.dbms.sql)
+
+        self.sqlite_table = pk.Table('{}_{}'.format(table, Table.count))
 
         self.indexes = self.dbms.dialect.get_indexes(self.cursor, schema, table)
         self.columns, self.name_to_column = self.__get_columns()
@@ -65,9 +70,12 @@ class Table:
             self.logger.error(msg)
             raise SemanticException(msg)
 
-        self.use_columns = {}
-
         self.filters = []
+
+        Table.count += 1
+
+    def get_sql(self):
+        return self.sqlite_table.get_sql() if Table.IS_SQLITE else self._table.get_sql()
 
     def __get_columns(self):
         raw_columns = self.dbms.dialect.all_columns(self.cursor, self.schema, self.table)
@@ -98,6 +106,17 @@ class Table:
         cursor.execute(query.get_sql())
         cursor.fetchall()
 
+    @utils.lazy_property
+    def selected_columns(self):
+        columns = [
+            column
+            for column in self.columns
+            if column.used and (column.visible or column.count_used > 0)
+        ]
+        for i, column in enumerate(columns):
+            column.idx = i
+        return columns
+
     def __del__(self):
         try:
             self.cursor.close()
@@ -107,11 +126,41 @@ class Table:
     def full_name(self):
         return self.dbms.name, self.db, self.schema, self.table
 
+    @utils.lazy_property
+    def select_query(self):
+        q = self._table.select(*[
+            column.pika()
+            for column in self.selected_columns
+        ])
+        for f in self.filters:
+            q = q.where(f.pika())
+        return q
+
+    @utils.lazy_property
+    def create_query(self):
+        columns = pk.Columns(*[
+            (column.name, column.type)
+            for column in self.selected_columns
+        ])
+        return pk.SQLLiteQuery.create_table(self.sqlite_table).columns(*columns)
+
+    @utils.lazy_property
+    def insert_query(self):
+        return 'INSERT INTO {} VALUES ({})'.format(
+            self.sqlite_table.get_sql(),
+            ', '.join(['?'] * len(self.selected_columns))
+        )
+
+    @utils.lazy_property
+    def size(self):
+        return len(self.selected_columns)
+
     def __repr__(self):
         return 'Table({}.{}.{}.{}, where={})'.format(*self.full_name(), self.filters)
 
 
 class Column(mx.AsMixin):
+
     def __init__(self, table: Table, name: str, is_null: bool, dtype: str,
                  max_len: int, max_size: int, indexes=None, supported=True):
         super().__init__()
@@ -130,6 +179,17 @@ class Column(mx.AsMixin):
         self._used = False
         self.visible = False
         self.count_used = 0
+
+        self.idx = None
+
+    @utils.lazy_property
+    def type(self):
+        return ('{}({})'.format(dialect.BaseDialect.BASE_TYPE_TO_SQLITE_TYPE[self.dtype], self.max_len)
+                if self.max_len is not None else
+                dialect.BaseDialect.BASE_TYPE_TO_SQLITE_TYPE[self.dtype])
+
+    def pika(self):
+        return pk.Field(self.name, table=self.table.sqlite_table) if Table.IS_SQLITE else pk.Field(self.name)
 
     @property
     def used(self):
@@ -167,3 +227,6 @@ class Column(mx.AsMixin):
             self.count_used,
             self.visible
         )
+
+    def __repr__(self):
+        return 'Column({}.{})'.format(self.table.table, self.name)
