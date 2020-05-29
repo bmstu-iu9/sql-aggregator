@@ -1,9 +1,12 @@
 import re
+import sqlite3
 
 import yaml
 
+from . import _logger
 from . import structures as st
-from . import dialect
+from .parser import SQLParser
+import os
 
 
 class ControlCenter:
@@ -22,51 +25,84 @@ class ControlCenter:
         }
 
         self.local_alias = dict(dbms={}, db={}, schema={}, table={})
+        self._sqlite_conn = sqlite3.connect(':memory:')
+
+    def reconnect(self):
+        if self._sqlite_conn:
+            self._sqlite_conn.close()
+        self._sqlite_conn = sqlite3.connect(':memory:')
 
     def execute(self, query):
-        pass
+        _logger.ParserLogger.is_crashed = False
+        _logger.ParserLogger.errors = []
 
-    def cycle(self):
-        buffer = []
-        while True:
-            try:
-                line = input()
-            except KeyboardInterrupt:
-                buffer = []
-                continue
+        parser = SQLParser.build(query)
+        parser.set_cc(self)
 
-            if not line:
-                continue
-            if buffer:
-                buffer.append(line)
-                if line.rstrip().endswith(';'):
-                    query = '\n'.join(line)
-                    buffer = []
-                    self.execute(query)
-            else:
-                use = self.USE_REGEXP.match(line)
-                if use:
-                    left = use.group(1).lower()
-                    right = use.group(2).lower()
-                    left = [
-                        word.strip()
-                        for word in left.split('.')
+        try:
+            select = parser.program()
+        except Exception as ex:
+            err = '\n'.join(_logger.ParserLogger.errors + ['{}({})'.format(ex.__class__.__name__, str(ex))])
+            return err, None
 
-                    ]
-                    if len(left) == 4:    # Alias table
-                        kind = 'table'
-                    elif len(left) == 3:  # Alias schema
-                        kind = 'schema'
-                    elif len(left) == 2:  # Alias db
-                        kind = 'db'
-                    elif len(left) == 1:  # Alias dbms
-                        kind = 'dbms'
-                    else:
-                        print('Wrong naming chain {}'.format('.'.join(left)))
-                        continue
-                    self.local_alias[kind][right] = tuple(left)
-                    continue
-                ext = self.EXIT_REGEXP.match(line)
-                if ext:
-                    return
-                buffer.append(line)
+        if _logger.ParserLogger.is_crashed:
+            return '\n'.join(_logger.ParserLogger.errors), None
+
+        try:
+            select.validate()
+            view_sql = select.get_sql()
+        except Exception as ex:
+            err = '\n'.join(_logger.ParserLogger.errors + ['{}({})'.format(ex.__class__.__name__, str(ex))])
+            return err, None
+
+        if _logger.ParserLogger.is_crashed:
+            return '\n'.join(_logger.ParserLogger.errors), None
+
+        self.reconnect()
+        cursor = self._sqlite_conn.cursor()
+
+        try:
+            create_queries = []
+            select_queries = []
+            insert_queries = []
+            for lvl in select.full_table_list:
+                for table in lvl:
+                    create_query = table.create_query.get_sql()
+                    create_queries.append(create_query)
+                    cursor.execute(create_query)
+                    self._sqlite_conn.commit()
+
+                    select_query = table.select_query.get_sql()
+                    select_queries.append(select_query)
+                    table.cursor.execute(select_query)
+
+                    insert_query = table.insert_query
+                    insert_queries.append(insert_query)
+                    cursor.executemany(insert_query, table.cursor.fetchall())
+                    self._sqlite_conn.commit()
+
+            view_query = 'CREATE VIEW result AS {}'.format(view_sql)
+            cursor.execute(view_query)
+            self._sqlite_conn.commit()
+            cursor.execute('SELECT * FROM result limit 100')
+            data = cursor.fetchall()
+            header = select.result_columns
+            return None, (create_queries, select_queries, insert_queries, view_query, (data, header))
+        except Exception as ex:
+            return str(ex), None
+        finally:
+            cursor.close()
+
+    def save_result(self, path):
+        try:
+            self._sqlite_conn.execute('select 1')
+        except sqlite3.ProgrammingError:
+            return 'Connection close'
+        if os.path.isfile(path):
+            return 'File is exists'
+
+        dump_conn = sqlite3.connect(path)
+        self._sqlite_conn.backup(dump_conn)
+        dump_conn.commit()
+        dump_conn.close()
+        return

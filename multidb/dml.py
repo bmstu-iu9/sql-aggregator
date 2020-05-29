@@ -441,6 +441,11 @@ class Select:
             for _ in [self.full_table_list.append([])]
         ]
 
+    @property
+    def result_columns(self):
+        return [s.short_name or 'column_{}'.format(i+1)
+                for i, s in enumerate(self.select_list)]
+
     def check_all_tables(self, table):
         """
         Грязная функция - меняет состояния уже существующих объектов
@@ -723,7 +728,11 @@ class Select:
     def get_sql(self):
         st.Table.IS_SQLITE = True
         from_sql = ', '.join([f.get_sql() for f in self.from_])
-        select_sql = ', '.join([s.pika().get_sql(with_namespace=True) for s in self.select_list])
+        select_sql = ', '.join([
+            s.pika().as_(alias).get_sql(with_namespace=True)
+            for i, s in enumerate(self.select_list)
+            for alias in [s.short_name or 'column_{}'.format(i+1)]
+        ])
         sql = 'SELECT {} FROM {}'.format(select_sql, from_sql)
         if self.where:
             where_pika = self.where.pika()

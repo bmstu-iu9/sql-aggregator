@@ -30,6 +30,7 @@ class ParserLogger(logging.Logger):
     parser = None
     log_position = True
     buffer = []
+    errors = []
 
     # -1 not log pos
     #  0 last token
@@ -87,6 +88,7 @@ class ParserLogger(logging.Logger):
 
         if level >= logging.ERROR:
             self.__class__.is_crashed = True
+
         if self.log_position and self.mode >= 0 and lexer:
             pos = lexer.interval if self.mode else lexer.last_interval
             msg = '{!r} {}'.format(pos, msg)
@@ -95,6 +97,8 @@ class ParserLogger(logging.Logger):
         if self.__class__.buffer:
             self.__class__.buffer[-1].append((self, level, msg, args, exc_info, extra, stack_info))
         else:
+            if level >= logging.ERROR:
+                self.__class__.errors.append(msg % args)
             super()._log(level, msg, args, exc_info, extra, stack_info)
 
 
