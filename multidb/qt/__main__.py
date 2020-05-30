@@ -1,12 +1,15 @@
+import html
 import sys
 import typing
 
 from PyQt5 import QtWidgets, QtCore
 from PyQt5.QtCore import Qt, QModelIndex
 
-import design
-from multidb.main import ControlCenter
-import html
+from . import design
+from ..main import ControlCenter
+import os
+
+PATH_TO_CONFIG = os.environ.get('MULTIDB_CONFIG', 'config.yaml')
 
 
 class TableModel(QtCore.QAbstractTableModel):
@@ -54,7 +57,7 @@ class MultiDBApp(QtWidgets.QMainWindow, design.Ui_MiltiDB):
         self.runQuery.clicked.connect(self.run_query)
         self.saveResult.clicked.connect(self.save_result)
 
-        self.control_center = ControlCenter(r'C:\Users\User\PycharmProjects\diplom_2\sql-aggregator\multidb\config.yaml')
+        self.control_center = ControlCenter(PATH_TO_CONFIG)
 
         self.model = TableModel()
 
