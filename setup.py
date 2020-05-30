@@ -13,6 +13,7 @@ setup(
     install_requires=[
         'pyodbc>=4.0.30',
         'PyPika>=0.37.7',
+        'pyqt5-tools==5.13.0.1.5',
         'PyQt5==5.13.0',
         'PyYAML'
     ],
