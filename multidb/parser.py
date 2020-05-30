@@ -686,12 +686,12 @@ class SQLParser(Parser):
         #   LEFT
         # | RIGHT
         # | FULL
-        if self.token.optional >> kw.LEFT:
+        if self.token.optional >> kw.FULL:
+            logger.error('FULL JOIN not supported')
+            return jn.FullJoin
+        elif self.token.optional >> kw.LEFT:
             return jn.LeftJoin
-        elif self.token.optional >> kw.RIGHT:
-            return jn.RightJoin
-        self.token >> kw.FULL
-        return jn.FullJoin
+        return jn.RightJoin
 
     @utils.log(tree_logger)
     def join_column_list(self):
