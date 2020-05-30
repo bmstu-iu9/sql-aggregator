@@ -73,6 +73,13 @@ class LeftJoin(OuterJoin):
 class RightJoin(OuterJoin):
     type = 'RIGHT'
 
+    def get_sql(self):
+        left = ('({})' if isinstance(self.left, BaseJoin) else '{}').format(self.left.get_sql())
+        right = ('({})' if isinstance(self.right, BaseJoin) else '{}').format(self.right.get_sql())
+        specification = self.specification.pika()
+        specification = specification.get_sql(with_namespace=True) if specification else '1'
+        return '{} LEFT JOIN {} ON {}'.format(right, left, specification)
+
 
 class FullJoin(OuterJoin):
     type = 'FULL'

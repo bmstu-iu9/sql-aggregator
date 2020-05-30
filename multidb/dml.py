@@ -352,6 +352,198 @@ class Select:
             self.join_expr_equals = join_expr_equals
             return join_expr_equals
 
+        def basis_classifier_left_join(self, join_left_tables, join_right_tables):
+            """
+            Классифицирует условия для LEFT_JOIN
+            """
+            join_left_tables = set(join_left_tables)
+            join_right_tables = set(join_right_tables)
+            join_expr_equals = []
+
+            for i, (basis, (flag, new_basis), columns) in enumerate(zip(
+                    self.base_expressions,
+                    self.equivalent_basis,
+                    self.used_columns
+            )):
+
+                left_columns, right_columns = columns
+                if isinstance(basis, expr.ComparisonPredicate):
+                    assert left_columns or right_columns
+                    left_table = {
+                        column.table
+                        for column in left_columns
+                    }
+                    right_table = {
+                        column.table
+                        for column in right_columns
+                    }
+                    wrong_tables = (left_table | right_table) - (join_left_tables | join_right_tables)
+                    if wrong_tables:
+                        Select.logger.error(
+                            'The tables (%s) is not included in the join',
+                            ', '.join(sorted(
+                                '.'.join(*table.full_name())
+                                for table in wrong_tables
+                            ))
+                        )
+                        continue
+
+                    if left_table <= join_right_tables and right_table <= join_left_tables:
+                        # Приведение к виду, где левая часть предиката
+                        # соответствует левой таблице, а правая часть
+                        # соответствует правой таблице
+                        basis.reverse()
+                        left_table, right_table = right_table, left_table
+                        left_columns, right_columns = right_columns, left_columns
+
+                    if len(left_table) == 1 and len(right_table) == 1:
+                        left_table = left_table.pop()
+                        right_table = right_table.pop()
+
+                        if left_table == right_table and {left_table} <= join_right_tables:  # Условие на одну таблицу
+                            if new_basis:
+                                left_table.filters.append(new_basis)
+                                self.not_used_expression.append(i)
+                                for column in left_columns + right_columns:
+                                    column.count_used -= 1
+                        elif (
+                            left_table in join_left_tables and
+                            right_table in join_right_tables and
+                            isinstance(basis.left, st.Column) and
+                            isinstance(basis.right, st.Column)
+                        ):
+                            # left.column = right.column
+                            if i in self.all_true and basis.op == ss.equals_operator:  # (a.id = b.id) is True
+                                join_expr_equals.append((basis.left, basis.right))
+                            elif i in self.all_false and basis.op == ss.not_equals_operator:  # (a.id != b.id) is False
+                                join_expr_equals.append((basis.left, basis.right))
+                            else:
+                                continue
+                            self.not_used_expression.append(i)
+                    elif len(left_table) == 0 and len(right_table) == 1 and right_table <= join_right_tables:
+                        table = right_table.pop()
+                        if new_basis:
+                            table.filters.append(new_basis)
+                            self.not_used_expression.append(i)
+                            for column in left_columns:
+                                column.count_used -= 1
+                    continue
+                else:
+                    assert len(left_columns)
+                    table = {
+                        column.table
+                        for column in left_columns
+                    }
+                    if len(table) == 1 and table <= join_right_tables:
+                        table = table.pop()
+                        if new_basis:
+                            table.filters.append(new_basis)
+                            self.not_used_expression.append(i)
+                            for column in left_columns:
+                                column.count_used -= 1
+
+            self.join_expr_equals = join_expr_equals
+            return join_expr_equals
+
+        def basis_classifier_right_join(self, join_left_tables, join_right_tables):
+            """
+            Классифицирует условия для RIGHT_JOIN
+            """
+            join_left_tables = set(join_left_tables)
+            join_right_tables = set(join_right_tables)
+            join_expr_equals = []
+
+            for i, (basis, (flag, new_basis), columns) in enumerate(zip(
+                    self.base_expressions,
+                    self.equivalent_basis,
+                    self.used_columns
+            )):
+
+                left_columns, right_columns = columns
+                if isinstance(basis, expr.ComparisonPredicate):
+                    assert left_columns or right_columns
+                    left_table = {
+                        column.table
+                        for column in left_columns
+                    }
+                    right_table = {
+                        column.table
+                        for column in right_columns
+                    }
+                    wrong_tables = (left_table | right_table) - (join_left_tables | join_right_tables)
+                    if wrong_tables:
+                        Select.logger.error(
+                            'The tables (%s) is not included in the join',
+                            ', '.join(sorted(
+                                '.'.join(*table.full_name())
+                                for table in wrong_tables
+                            ))
+                        )
+                        continue
+
+                    if left_table <= join_right_tables and right_table <= join_left_tables:
+                        # Приведение к виду, где левая часть предиката
+                        # соответствует левой таблице, а правая часть
+                        # соответствует правой таблице
+                        basis.reverse()
+                        left_table, right_table = right_table, left_table
+                        left_columns, right_columns = right_columns, left_columns
+
+                    if len(left_table) == 1 and len(right_table) == 1:
+                        left_table = left_table.pop()
+                        right_table = right_table.pop()
+
+                        if left_table == right_table and {right_table} <= join_left_tables:  # Условие на одну таблицу
+                            if new_basis:
+                                left_table.filters.append(new_basis)
+                                self.not_used_expression.append(i)
+                                for column in left_columns + right_columns:
+                                    column.count_used -= 1
+                        elif (
+                            left_table in join_left_tables and
+                            right_table in join_right_tables and
+                            isinstance(basis.left, st.Column) and
+                            isinstance(basis.right, st.Column)
+                        ):
+                            # left.column = right.column
+                            if i in self.all_true and basis.op == ss.equals_operator:  # (a.id = b.id) is True
+                                join_expr_equals.append((basis.left, basis.right))
+                            elif i in self.all_false and basis.op == ss.not_equals_operator:  # (a.id != b.id) is False
+                                join_expr_equals.append((basis.left, basis.right))
+                            else:
+                                continue
+                            self.not_used_expression.append(i)
+                    elif len(left_table) == 1 and len(right_table) == 0 and left_table <= join_left_tables:
+                        table = left_table.pop()
+                        if new_basis:
+                            table.filters.append(new_basis)
+                            self.not_used_expression.append(i)
+                            for column in left_columns:
+                                column.count_used -= 1
+                    continue
+                else:
+                    assert len(left_columns)
+                    table = {
+                        column.table
+                        for column in left_columns
+                    }
+                    if len(table) == 1 and table <= join_left_tables:
+                        table = table.pop()
+                        if new_basis:
+                            table.filters.append(new_basis)
+                            self.not_used_expression.append(i)
+                            for column in left_columns:
+                                column.count_used -= 1
+
+            self.join_expr_equals = join_expr_equals
+            return join_expr_equals
+
+        def basis_classifier_full_join(self, join_left_tables, join_right_tables):
+            """
+            Классифицирует условия для FULL_JOIN
+            """
+            return []
+
         def pika(self):
             if not self.not_used_expression:
                 return self.raw_expression.pika()
