@@ -16,10 +16,6 @@ def setup_logging(
     if os.path.exists(path):
         with open(path, 'rt') as f:
             config = yaml.safe_load(f)
-        try:
-            os.remove(config['handlers']['file']['filename'])
-        except Exception as ex:
-            logging.error(ex)
         logging.config.dictConfig(config)
     else:
         logging.basicConfig(level=default_level)
