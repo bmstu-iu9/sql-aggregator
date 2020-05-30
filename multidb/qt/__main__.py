@@ -5,8 +5,8 @@ import typing
 from PyQt5 import QtWidgets, QtCore
 from PyQt5.QtCore import Qt, QModelIndex
 
-import design
-from multidb.main import ControlCenter
+from .import design
+from ..main import ControlCenter
 import os
 
 PATH_TO_CONFIG = os.environ.get('MULTIDB_CONFIG', 'config.yaml')
