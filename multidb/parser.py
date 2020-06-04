@@ -277,7 +277,7 @@ class SQLParser(Parser):
     @utils.log(tree_logger)
     def factor(self):
         # [ <minus_sign> ] <numeric_primary>
-        sign = self.token.optional >> ss.minus_sign
+        sign = None
         if self.token == (ss.plus_sign, ss.minus_sign):
             sign = self.sign()
         primary = self.numeric_primary()
@@ -355,13 +355,10 @@ class SQLParser(Parser):
     @utils.log(tree_logger)
     def boolean_primary(self) -> dt.BooleanPrimary:
         #   <predicate>
-        # | <parenthesized_value_expression>
-        # | <nonparenthesized_value_expression_primary>
-        # Todo: parenthesized_value_expression вместо parenthesized_boolean_value_expression
+        # | <value_expression_primary>
         alt, value = self._choice_of_alternatives([
             self.predicate,
-            self.parenthesized_value_expression,
-            self.nonparenthesized_value_expression_primary,
+            self.value_expression_primary,
         ])
         return value
 
@@ -399,31 +396,6 @@ class SQLParser(Parser):
         )
 
     @utils.log(tree_logger)
-    def row_value_expression(self) -> dt.RowValueSpecialCase:
-        # <row_value_special_case>
-        return self.row_value_special_case()
-
-    @utils.log(tree_logger)
-    def row_value_special_case(self) -> dt.RowValueSpecialCase:
-        #   <value_expression>
-        # | <value_specification>
-        alt, value = self._choice_of_alternatives([self.value_expression, self.value_specification])
-        return value
-
-    @utils.log(tree_logger)
-    def value_specification(self) -> dt.Literal:
-        # <literal>
-        return self.literal()
-
-    # @utils.log(tree_logger)
-    # def parenthesized_boolean_value_expression(self) -> dt.BooleanValueExpression:
-    #     # <left_paren> <boolean_value_expression> <right_paren>
-    #     self.token >> ss.left_paren
-    #     value = self.boolean_value_expression()
-    #     self.token >> ss.right_paren
-    #     return value
-
-    @utils.log(tree_logger)
     def value_expression_primary(self) -> dt.ValueExpressionPrimary:
         #   <parenthesized_value_expression>
         # | <nonparenthesized_value_expression_primary>
@@ -452,25 +424,6 @@ class SQLParser(Parser):
     def unsigned_value_specification(self) -> dt.UnsignedLiteral:
         # <unsigned_literal>
         return self.unsigned_literal()
-
-    @utils.log(tree_logger)
-    def literal(self) -> dt.Literal:
-        #   <signed_numeric_literal>
-        # | <general_literal>
-        if self.token == (tk.IntToken, tk.FloatToken, ss.plus_sign, ss.plus_sign):
-            return self.signed_numeric_literal()
-        return self.general_literal()
-
-    @utils.log(tree_logger)
-    def signed_numeric_literal(self) -> dt.SignedNumericLiteral:
-        # [ <sign> ] <unsigned_numeric_literal>
-        sign = ss.plus_sign
-        if self.token == (ss.plus_sign, ss.minus_sign):
-            sign = self.sign()
-        value = self.unsigned_numeric_literal()
-        if sign is not None:
-            value = expr.UnarySign(value, sign)
-        return value
 
     @utils.log(tree_logger)
     def unsigned_literal(self) -> dt.UnsignedLiteral:
