@@ -589,16 +589,6 @@ class SQLParser(Parser):
     def union_join(self):
         raise NotSupported
 
-    # @utils.log(tree_logger)
-    # def join_specification(self):
-    #     #   <join_condition>
-    #     # | <named_columns_join>
-    #     if self.token == kw.ON:
-    #         data = self.join_condition()
-    #     else:
-    #         data = self.named_columns_join()
-    #     return data
-
     @utils.log(tree_logger)
     def join_specification(self):
         # <join_condition>
@@ -613,15 +603,6 @@ class SQLParser(Parser):
     @utils.log(tree_logger)
     def search_condition(self):
         return self.boolean_value_expression()
-
-    # @utils.log(tree_logger)
-    # def named_columns_join(self):
-    #     # USING <left_paren> <join_column_list> <right_paren>
-    #     self.token >> kw.USING
-    #     self.token >> ss.left_paren
-    #     data = self.join_column_list()
-    #     self.token >> ss.right_paren
-    #     return data
 
     @utils.log(tree_logger)
     def join_type(self):
@@ -645,19 +626,6 @@ class SQLParser(Parser):
         elif self.token.optional >> kw.LEFT:
             return jn.LeftJoin
         return jn.RightJoin
-
-    @utils.log(tree_logger)
-    def join_column_list(self):
-        # <column_name_list>
-        return self.column_name_list()
-
-    @utils.log(tree_logger)
-    def column_name_list(self):
-        # <column_name::ID> [ { <comma> <column_name::ID> }... ]
-        data = [self.token >> tk.IdentifierToken]
-        while self.token.optional >> ss.comma:
-            data.append(self.token >> tk.IdentifierToken)
-        return data
 
     @utils.log(tree_logger)
     def where_clause(self):

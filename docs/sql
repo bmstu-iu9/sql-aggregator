@@ -1,0 +1,142 @@
+<program> ::= <select>
+
+<select> ::= SELECT <select_list> <table_expression>
+
+<select_list> ::=
+      <asterisk>
+    | <select_sublist> [ { <comma> <select_sublist> }... ]
+
+<select_sublist> ::= <qualified_asterisk> | <derived_column>
+
+<qualified_asterisk> ::= <asterisked_identifier_chain> <asterisk>
+
+<asterisked_identifier_chain> ::=
+    <IDENTIFIER> <period> [ { <IDENTIFIER> <period> }... ]
+
+<derived_column> ::= <value_expression> [ [ AS ] <IDENTIFIER> ]
+
+<value_expression> ::=
+      <numeric_value_expression>
+    | <boolean_value_expression>
+
+<numeric_value_expression> ::=
+      <term>
+    | <term> <plus_sign> <numeric_value_expression>
+    | <term> <minus_sign> <numeric_value_expression>
+
+<term> ::=
+      <factor>
+    | <factor> <asterisk> <term>
+    | <factor> <solidus> <term>
+
+<factor> ::= [ <sign> ] <numeric_primary>
+
+<numeric_primary> ::= <value_expression_primary>
+
+<boolean_value_expression> ::=
+      <boolean_term>
+    | <<boolean_term> OR <boolean_value_expression>
+
+<boolean_term> ::=
+      <boolean_factor>
+    | <boolean_factor> AND <boolean_term>
+
+<boolean_factor> ::= [ NOT ] <boolean_test>
+
+<boolean_test> ::= <boolean_primary> [ IS [ NOT ] <truth_value> ]
+
+<truth_value> ::=
+      TRUE
+    | FALSE
+    | NULL
+
+<boolean_primary> ::=
+      <predicate>
+    | <value_expression_primary>
+
+<predicate> ::= <comparison_predicate>
+
+<comparison_predicate> ::=
+    <operand_comparison> <comp_op> <operand_comparison>
+
+<operand_comparison> ::=
+      <not_boolean_value_expression>
+    | <parenthesized_value_expression>
+
+<not_boolean_value_expression> ::= <numeric_value_expression>
+
+<comp_op> ::=
+      <equals_operator>
+    | <not_equals_operator>
+    | <less_than_operator>
+    | <greater_than_operator>
+    | <less_than_or_equals_operator>
+    | <greater_than_or_equals_operator>
+
+<value_expression_primary> ::=
+      <parenthesized_value_expression>
+    | <nonparenthesized_value_expression_primary>
+
+<parenthesized_value_expression> ::=
+    <left_paren> <value_expression> <right_paren>
+
+<nonparenthesized_value_expression_primary> ::=
+      <unsigned_value_specification>
+    | <column_reference>
+
+<unsigned_value_specification> ::= <unsigned_literal>
+
+<unsigned_literal> ::=
+      <unsigned_numeric_literal>
+    | <general_literal
+
+<unsigned_numeric_literal> ::= <INTEGER> | <FLOAT>
+
+<general_literal> ::= TRUE | FALSE | NULL
+
+<column_reference> ::= <basic_identifier_chain>
+
+<basic_identifier_chain> ::= <identifier_chain>
+
+<identifier_chain> ::= <IDENTIFIER> [ { <period> <IDENTIFIER> }... ]
+
+<table_expression> ::= <from_clause> [ <where_clause> ]
+
+<from_clause> ::= FROM <table_reference_list>
+
+<table_reference_list> ::= 
+    <table_reference> [ { <comma> <table_reference> }... ]
+
+<table_reference> ::= <join_factor> [ { <join_type> }... ]
+
+<join_factor> ::= 
+      <table_primary>
+	| <left_paren> <table_reference> <right_paren>
+	
+<table_primary> ::= <table_or_query_name> [ [ AS ] <IDENTIFIER> ]
+
+<table_or_query_name> ::= <table_name>
+
+<table_name> ::= <basic_identifier_chain>
+
+<joined_table> ::=
+      <cross_join>
+	| <qualified_join>
+
+<cross_join> ::= CROSS JOIN <join_factor>
+
+<qualified_join> ::= [ <join_type> ] JOIN <join_factor> <join_specification>
+
+<join_type> ::=
+	  INNER
+	| <outer_join_type> [ OUTER ]
+
+<outer_join_type> ::= LEFT | RIGHT
+
+<join_specification> ::= <join_condition>
+
+<join_condition> ::= ON <search_condition>
+
+<search_condition> ::= <boolean_value_expression>
+
+<where_clause> ::= WHERE <search_condition>
