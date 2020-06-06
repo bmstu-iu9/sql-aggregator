@@ -86,6 +86,9 @@ class PrimaryValue(BaseExpression):
     def pika(self):
         return self.value
 
+    def __eq__(self, other):
+        return isinstance(other, self.__class__) and self.KIND == other.KIND and self.value == other.value
+
     def __repr__(self):
         return '{}({})'.format(self.__class__.__name__, self.value)
 
@@ -188,6 +191,9 @@ class UnarySign(NumericExpression):
         value = self.value.pika()
         return value if self.sign == 1 else -value
 
+    def __eq__(self, other):
+        return isinstance(other, self.__class__) and self.sign == other.sign and self.value == other.value
+
     def __repr__(self):
         return '{}CastToInt({!r})'.format('-' if self.is_minus else '', self.value)
 
@@ -230,6 +236,12 @@ class DoubleNumericExpression(NumericExpression):
 
     def pika(self):
         raise NotImplementedError()
+
+    def __eq__(self, other):
+        return (isinstance(other, self.__class__)
+                and self.op == other.op
+                and self.left == other.left
+                and self.right == other.right)
 
     def __repr__(self):
         return '({!r} {} {!r})'.format(self.left, self.op, self.right)
@@ -383,6 +395,9 @@ class Not(BooleanExpression):
     def pika(self):
         return not self.value.pika()
 
+    def __eq__(self, other):
+        return isinstance(other, self.__class__) and self.value == other.value
+
     def __repr__(self):
         return 'not {!r}'.format(self.value)
 
@@ -452,6 +467,10 @@ class DoubleBooleanExpression(BooleanExpression):
             return Null()
         self.args = other
         return self.special_rules(bool_, none)
+
+    def __eq__(self, other):
+        # Fixme
+        return False
 
     def pika(self):
         raise NotImplementedError()
@@ -583,6 +602,9 @@ class Is(BooleanExpression):
             return self.left.pika().isnull()
         raise UnreachableException()
 
+    def __eq__(self, other):
+        return isinstance(other, self.__class__) and self.left == other.left and self.right == other.right
+
 
 class BasePredicate(BaseExpression):
     def pika(self):
@@ -651,6 +673,10 @@ class ComparisonPredicate(BasePredicate):
         left = self.left.pika()
         right = self.right.pika()
         return self.action(left, right)
+
+    def __eq__(self, other):
+        # Fixme
+        return False
 
     def __repr__(self):
         return '({!r} {} {!r})'.format(self.left, ss.NAME_TO_SYMBOL.get(self.op), self.right)

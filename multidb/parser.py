@@ -171,9 +171,8 @@ class SQLParser(Parser):
     def select_list(self):
         #   <asterisk>
         # | <select_sublist> [ { <comma> <select_sublist> }... ]
-        if self.token == ss.asterisk:
-            data = self.token.next()
-        else:
+        data = self.token.optional >> ss.asterisk
+        if data is None:
             data = [self.select_sublist()]
             while self.token.optional >> ss.comma:
                 data.append(self.select_sublist())

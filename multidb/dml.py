@@ -792,7 +792,6 @@ class Select:
 
         if isinstance(self.select_list, str):  # all columns for all tables
             assert self.select_list == ss.asterisk
-            assert len(self.select_list) == 1
             for level in self.full_table_list:
                 for tbl in level:
                     for column in tbl.columns:

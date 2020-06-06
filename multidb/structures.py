@@ -206,27 +206,30 @@ class Column(mx.AsMixin):
             )
         self._used = value
 
-    def __repr__(self):
-        return (
-            'Column({}.{}'
-            ', is_null={}'
-            ', type={}'
-            ', size={}'
-            ', indexes={}'
-            ', supported={}'
-            ', count_used={}'
-            ', visible={})'
-        ).format(
-            '.'.join(self.table.full_name()),
-            self.name,
-            self.is_null,
-            self.dtype,
-            self.max_size,
-            self.indexes,
-            self.supported,
-            self.count_used,
-            self.visible
-        )
+    # def __repr__(self):
+    #     return (
+    #         'Column({}.{}'
+    #         ', is_null={}'
+    #         ', type={}'
+    #         ', size={}'
+    #         ', indexes={}'
+    #         ', supported={}'
+    #         ', count_used={}'
+    #         ', visible={})'
+    #     ).format(
+    #         '.'.join(self.table.full_name()),
+    #         self.name,
+    #         self.is_null,
+    #         self.dtype,
+    #         self.max_size,
+    #         self.indexes,
+    #         self.supported,
+    #         self.count_used,
+    #         self.visible
+    #     )
+
+    def __eq__(self, other):
+        return self.name == other.name and self.table is other.table
 
     def __repr__(self):
         return 'Column({}.{})'.format(self.table.table, self.name)
