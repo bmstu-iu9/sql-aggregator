@@ -375,8 +375,7 @@ class Not(BooleanExpression):
     def convolution(self):
         self.value = self.value.convolution.to_bool
         if isinstance(self.value, ComparisonPredicate):
-            self.value.op = self.value.MAP_NOT[self.value.op]
-            return self.value
+            return self.value.not_()
         elif isinstance(self.value, Bool):
             return Bool(not self.value.value)
         elif isinstance(self.value, Null):
@@ -595,12 +594,15 @@ class Is(BooleanExpression):
 
     def pika(self):
         if self.right is True:
-            return self.left.pika().istrue()
+            return pk.Bracket(self.left.pika()).istrue()
         elif self.right is False:
-            return self.left.pika().isfalse()
+            return pk.Bracket(self.left.pika()).isfalse()
         elif self.right is None:
-            return self.left.pika().isnull()
+            return pk.Bracket(self.left.pika()).isnull()
         raise UnreachableException()
+
+    def __repr__(self):
+        return '({!r}) IS {}'.format(self.left, self.right)
 
     def __eq__(self, other):
         return isinstance(other, self.__class__) and self.left == other.left and self.right == other.right
@@ -662,6 +664,11 @@ class ComparisonPredicate(BasePredicate):
             return Bool(self.action(left, right))
         elif isinstance(self.left, Null) or isinstance(self.right, Null):
             return Null()
+        return self
+
+    def not_(self):
+        self.op = self.MAP_NOT[self.op]
+        self.action = self.MAP_ACTION[self.op]
         return self
 
     def reverse(self):

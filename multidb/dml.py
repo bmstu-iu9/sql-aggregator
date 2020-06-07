@@ -263,7 +263,6 @@ class Select:
                     self.equivalent_basis,
                     self.used_columns
             )):
-
                 left_columns, right_columns = columns
                 if isinstance(basis, expr.ComparisonPredicate):
                     assert left_columns or right_columns
