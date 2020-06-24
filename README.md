@@ -2,6 +2,29 @@
 sql-aggregator (MultiDB) позволяет в одном запросе манипулировать данными из различных баз данных.
 Например, производить JOIN таблицы из MySQL на таблицу из PostgreSQL
 
+# Установка
+В одну строку:
+```bash
+pip install git+https://github.com/bmstu-iu9/sql-aggregator.git
+```
+Или при помощи сборки из исходников:
+```bash
+python setup.py install
+```
+Рекомендуется использовать изолированную среду:
+```bash
+python3 -m venv env
+cd env
+source bin/activate
+pip install git+https://github.com/bmstu-iu9/sql-aggregator.git
+```
+P.S. В UNIX системах могут быть проблемы при установке PyQt5
+
+# Запуск
+```bash
+python -m multidb.qt
+```
+
 # Версия 0.1 (в разработке)
 Инициализирующая версия
 
