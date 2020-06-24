@@ -12,10 +12,17 @@ pip install git+https://github.com/bmstu-iu9/sql-aggregator.git
 python setup.py install
 ```
 Рекомендуется использовать изолированную среду:
+
+Windows (GIT Bash):
+```bash
+python -m venv env
+source env/Source/activate
+pip install git+https://github.com/bmstu-iu9/sql-aggregator.git
+```
+UNIX:
 ```bash
 python3 -m venv env
-cd env
-source bin/activate
+source env/bin/activate
 pip install git+https://github.com/bmstu-iu9/sql-aggregator.git
 ```
 Минимальная поддерживаемая версия Python 3.7
