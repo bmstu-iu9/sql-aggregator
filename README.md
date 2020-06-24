@@ -3,6 +3,11 @@ sql-aggregator (MultiDB) позволяет в одном запросе ман�
 Например, производить JOIN таблицы из MySQL на таблицу из PostgreSQL
 
 # Установка
+В начале необходимо обновить `pip`:
+```bash
+python -m pip install --upgrade pip
+```
+
 В одну строку:
 ```bash
 pip install git+https://github.com/bmstu-iu9/sql-aggregator.git
@@ -17,12 +22,14 @@ Windows (GIT Bash):
 ```bash
 python -m venv env
 source env/Source/activate
+python -m pip install --upgrade pip
 pip install git+https://github.com/bmstu-iu9/sql-aggregator.git
 ```
 UNIX:
 ```bash
 python3 -m venv env
 source env/bin/activate
+python -m pip install --upgrade pip
 pip install git+https://github.com/bmstu-iu9/sql-aggregator.git
 ```
 Минимальная поддерживаемая версия Python 3.7
