@@ -18,6 +18,8 @@ cd env
 source bin/activate
 pip install git+https://github.com/bmstu-iu9/sql-aggregator.git
 ```
+Минимальная поддерживаемая версия Python 3.7
+
 P.S. В UNIX системах могут быть проблемы при установке PyQt5
 
 # Запуск
