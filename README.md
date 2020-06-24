@@ -29,7 +29,7 @@ UNIX:
 ```bash
 python3 -m venv env
 source env/bin/activate
-python -m pip install --upgrade pip
+python3 -m pip install --upgrade pip
 pip install git+https://github.com/bmstu-iu9/sql-aggregator.git
 ```
 Минимальная поддерживаемая версия Python 3.7
