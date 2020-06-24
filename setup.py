@@ -13,7 +13,7 @@ setup(
     install_requires=[
         'pyodbc>=4.0.30',
         'PyPika>=0.37.7',
-        'pyqt5',
+        'pyqt5==5.13.0',
         'PyYAML'
     ],
     url='',
