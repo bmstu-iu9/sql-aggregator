@@ -37,6 +37,11 @@ pip install git+https://github.com/bmstu-iu9/sql-aggregator.git
 P.S. В UNIX системах могут быть проблемы при установке PyQt5
 
 # Запуск
+Заглушка config.yaml:
+```bash
+echo '{}' >> config.yaml
+```
+Сам запуск
 ```bash
 python -m multidb.qt
 ```
